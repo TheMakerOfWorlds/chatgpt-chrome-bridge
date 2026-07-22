@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-chrome-bridge",
-  "version": "0.1.0+codex.20260722163916",
+  "version": "0.1.0+codex.20260722165014",
   "description": "Give Codex a context-isolated ChatGPT worker with sanitized repository bundles, durable Pro status, generated-file retrieval, and browser inspection.",
   "author": {
     "name": "Jackson Stone"
