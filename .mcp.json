@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "chatgpt-chrome-bridge": {
+      "command": "node",
+      "args": [
+        "./scripts/mcp-server.mjs"
+      ],
+      "cwd": "."
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "chatgpt-chrome-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local MCP bridge from Codex to ChatGPT with sanitized repository bundling.",
+  "scripts": {
+    "test": "node --test scripts/tests/*.test.mjs",
+    "check": "node --check scripts/mcp-server.mjs && node --check scripts/live-pro-artifact-smoke.mjs && node --check scripts/live-response-recovery.mjs && node --check scripts/live-mcp-response-recovery.mjs && node --check scripts/lib/attachments.mjs && node --check scripts/lib/bridge.mjs && node --check scripts/lib/config.mjs && node --check scripts/lib/delegation.mjs && node --check scripts/lib/mcp-output.mjs && node --check scripts/lib/native-controller.mjs && node --check scripts/lib/native-login.mjs && node --check scripts/lib/repository-bundle.mjs && node --check scripts/lib/response-files.mjs && node --check scripts/lib/submission-pacer.mjs && node --check scripts/lib/ui-adapter.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "playwright-core": "1.61.1",
+    "zod": "4.1.12"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

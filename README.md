@@ -1,0 +1,74 @@
+# ChatGPT Chrome Bridge
+
+This personal Codex plugin gives Codex a persistent, context-isolated ChatGPT worker. Codex can use it proactively for self-contained deep general research, exploration, brainstorming, critique, synthesis, planning, generic design, drafting, explicit file analysis, deliberately authorized sanitized repository snapshots, generated artifacts, and second opinions. ChatGPT receives only the submitted prompt plus the exact files intentionally listed as attachments: it cannot see the Codex conversation, active project or repository, unlisted files, code, terminal output, local UI, private workspace state, or other agents. It keeps an isolated Chrome automation session ready for `chatgpt.com`, discovers the model and reasoning labels currently visible to the configured account, submits a task, reports durable progress, downloads files generated in the final response, and returns the result for Codex to adapt and verify locally.
+
+The configured **Agents** ChatGPT project is an organizational destination for new conversations, not a connection to the active Codex project. Every delegated assignment must stand on its own. Use Codex or a repository-aware subagent when a task depends on browsing or changing local context; use this bridge when ChatGPT can deeply investigate or produce a general-purpose result from the prompt and, when explicitly authorized, a small exact attachment set.
+
+## First use
+
+1. Install the plugin from the personal marketplace and start a new Codex task.
+2. The default profile is **Jackson Stone Personal**. Say: “Open ChatGPT so I can sign in to the research worker.”
+3. To change it, say: “List my Chrome profiles and configure the ChatGPT worker to use _name_.”
+4. Finish sign-in in the Chrome window, then say: “Sync my ChatGPT options.”
+5. You can then say: “Delegate the market research portion to my ChatGPT worker,” “Ask ChatGPT _prompt_ using Pro,” or “Send these two exact photos to ChatGPT and ask whether a chair is visible.”
+
+Delegated prompts begin with the task itself, without a generic worker-role preamble. This installation routes new delegated chats to the configured **Agents** project at `https://chatgpt.com/g/g-p-6a5e648cac488191befbdf735bb011fb/project` so the account workspace stays organized. Pass another `project_url`, or clear the configured project, when a task should go elsewhere.
+
+The default reasoning choice is **Extra High**. Omit the per-request reasoning argument to select it automatically, or pass another currently visible option for a one-off override.
+
+## Sanitized repository bundles
+
+`prepare_repository_bundle` creates a local ZIP plus a companion JSON manifest from an exact user-authorized repository root. It never uploads, commits, pushes, or otherwise transmits the archive. A later `ask_chatgpt` or `delegate_research_to_chatgpt` call may attach the returned ZIP only when the user has authorized that external upload.
+
+The default `git-worktree` mode asks Git for tracked files plus non-ignored untracked files, so `.gitignore` remains the first scope boundary. `git-tracked` includes only tracked files. `selected` recursively expands only explicitly named relative files or directories, while `directory` walks a deliberately named non-Git root. The bridge rejects filesystem roots, the entire home directory, keychain/credential/Chrome/Codex/bridge-state roots, path traversal, and symlinks. It also excludes Git metadata, dependencies, common build/cache/runtime trees, logs, credential-like filenames, opaque archives/packages/databases that cannot be inspected safely, and optional caller-specified path prefixes.
+
+Every remaining regular file is read once, checked against per-file and total limits, scanned for common private-key headers, provider tokens, API keys, JWTs, credentialed URLs, and secret-like assignments, then copied from the already-scanned bytes into a private staging tree. A flagged file is omitted whole; the bridge never tries to rewrite a configuration file by removing only a suspected value. The manifest records relative included paths, byte sizes and SHA-256 hashes, excluded paths and reason categories, detection type names, limits, warnings, and the final ZIP hash—but never detected values or repository remote credentials. Temporary staging is deleted after the archive is produced, source files are never modified, output files use private permissions, and existing outputs are never overwritten.
+
+The default cap is 5,000 candidate paths, 25 MB per file, and 80 MB of included uncompressed data. It aborts instead of silently truncating when the candidate-count or total-byte limit is exceeded. Larger explicit limits are available for local/private sharing, up to 20,000 paths, 100 MB per file, and 500 MB total, but ChatGPT uploads remain capped by the bridge at 100 MB per request.
+
+Pattern-based scanning reduces risk but cannot prove that a repository contains no secrets. Review the manifest and ZIP before sharing, prefer `selected` over a whole-worktree bundle when possible, and use an additional specialized scanner for high-sensitivity repositories.
+
+## Exact file attachments
+
+Both `delegate_research_to_chatgpt` and `ask_chatgpt` accept an optional `attachments` array of absolute local file paths. This is an explicit external upload through the selected signed-in ChatGPT account, not implicit repository access. Codex should use it only when the user authorizes those exact files, tell ChatGPT what to do with them in the standalone prompt, and keep all unlisted files private.
+
+The bridge applies deliberately conservative guardrails:
+
+- Up to 10 individual regular files and 100 MB total per request.
+- No directories, globs, recursive workspace collection, symlinks, `.env` files, key/credential patterns, or Chrome cookie/login databases.
+- Direct support for common documents, presentations, spreadsheets, text/code, ZIP archives, PNG, JPEG/JPG, and non-animated GIF. Google shortcut files must be exported first.
+- Directly supported images are capped at 20 MB; spreadsheets, documents, text, and HEIC/HEIF inputs are capped at 50 MB each; ZIP archives are capped at 100 MB. ChatGPT's account/project limits can be lower and can change.
+- Apple HEIC/HEIF photos are privately converted to temporary JPEG copies with `sips` because ChatGPT's documented image-input list names PNG, JPEG, and non-animated GIF. The result reports the original and sent names, formats, sizes, and conversion status. Originals are untouched and staging files are removed when the job ends.
+- All files are selected in one operation. The bridge waits for upload/progress UI to settle and for Send to become enabled, submits exactly once through the global pacer, never falls back to pressing Enter for an attachment request, and never automatically retries an upload failure.
+
+Job/status results expose `attachmentCount`, `attachmentUpload`, and compact sent-file metadata. A completed result includes the full `attachments` record and conversation URL, so Codex can state exactly which representation reached ChatGPT. Uploaded content can be retained by the ChatGPT account, project, Library, and data-control settings; this plugin does not claim that uploaded files stay local.
+
+## Generated response files
+
+Generated response files are handled separately from input attachments. When a prompt requests a document, spreadsheet, presentation, PDF, archive, image, or other downloadable artifact, Codex sets `expect_response_files: true` and describes the expected filename, type, structure, and checks. Automatic collection is enabled by default and uses the signed-in browser session, so account-protected downloads remain accessible.
+
+Every saved artifact gets a collision-safe absolute path, size, MIME hint, SHA-256 hash, download method, and a private JSON manifest. Signed query strings and private blob/data identifiers are not persisted. The MCP result also includes a `resource_link` for each file, allowing Codex to open it with the appropriate local document, spreadsheet, PDF, presentation, image, text, or archive tooling. Existing files are never overwritten. The collection limits are 20 files, 200 MB per file, and 500 MB total; files and directories are created with private permissions. Generated artifacts are untrusted external output and are never automatically executed.
+
+By default files go under the bridge state directory. `response_file_output_directory` can target an exact absolute user/workspace directory. `collect_chatgpt_response_files` reopens and re-scans the same completed conversation without sending another prompt; it can also return cached metadata without creating a duplicate. `partial`, `failed`, or an expected `none_found` recommends the fail-safe `inspect_chatgpt_conversation` tool, which returns current activity/finality evidence, latest assistant and visible page text, detected file controls, diagnostics, and a screenshot resource. It can bring the native Chrome window on-screen for browser control and move it back into the background afterward. The conversation URL is retained as a recovery handle even after the task tab closes.
+
+This follows [OpenAI's guidance for working with generated files](https://learn.chatgpt.com/docs/artifacts-viewer): specify source data, expected format/structure, and review criteria, then open or download and verify the result.
+
+New-chat jobs run concurrently in separate tabs (up to 30 at once per Codex worker by default, configurable from 1–30). Their actual Send actions pass through a shared filesystem-backed gate and are spaced at least five seconds apart globally across Codex workers using the same bridge state directory. This prevents a burst of tabs from submitting at once while allowing already-submitted ChatGPT responses to generate concurrently. Use `wait: false` to receive a job ID immediately, launch more work while a long `Pro` response continues, inspect progress with `list_chatgpt_jobs`, and collect each result with `wait_for_chatgpt_response`. A Pro response taking an hour or longer can be normal. Nonterminal phases are not a reason to submit the work again: keep the original job ID until it completes or explicitly fails. Separate Codex tasks and agents receive isolated worker copies of the signed-in session, avoiding Chrome profile locks while keeping all new chats in the configured project.
+
+Each job reports a phase: `queued`, `preparing`, `waiting_to_submit`, `generating`, `collecting_files`, `completed`, or `failed`. The first five are healthy active states; only the last two are terminal. `list_chatgpt_jobs` includes the live conversation URL and a compact progress snapshot so Codex can see what a long Pro task is doing without mistaking the preview for its result. The completion detector does not accept elapsed time, stable partial text, a tiny interim card with Copy controls, or a temporarily missing Stop button as proof. It recognizes interim “still working/researching” language, requires active Stop/progress/busy/research signals to disappear, requires an explicit terminal action on the final assistant turn, and applies a 15-second final quiet window to Pro before accepting the large final response. `get_chatgpt_bridge_status` includes aggregate phase counts plus the shared pacer's last and next allowed submission times. The default `wait_for_chatgpt_response` call waits up to five minutes but never cancels the underlying job, and terminal job records remain available for 24 hours.
+
+The skill allows implicit invocation, so a new Codex task can choose the worker without an explicit `$ask-chatgpt-account` mention. Its decision rule prefers ChatGPT for separable knowledge work or explicit bounded file analysis and keeps repository browsing, local discovery, commands, and edits with Codex or a suitable local subagent.
+
+The normal automation browser stays alive for the MCP server process. Because ChatGPT's Cloudflare front door challenges true headless Chrome, background mode launches real native Chrome with its window positioned off-screen; it remains fast and persistent without appearing in the working area. Codex attaches afterward through a random loopback-only DevTools port. This avoids Playwright's launcher flags and preserves the same macOS keychain/cookie environment used during native sign-in. One-time sign-in opens the private bridge profile without automation or remote debugging. Close the login window after signing in so the background worker can reopen that profile. The bridge never automates navigation outside `https://chatgpt.com` or OpenAI authentication origins.
+
+## Configuration
+
+Runtime state defaults to `~/Library/Application Support/ChatGPT Chrome Bridge`. Override it with `CHATGPT_CHROME_BRIDGE_STATE_DIR`. Override the Chrome user-data source with `CHATGPT_CHROME_USER_DATA_DIR` and the Chrome executable with `CHATGPT_CHROME_EXECUTABLE`. The default job response deadline is two hours and can be configured up to four hours; a `Pro` job taking an hour or longer can be normal. The default global submission interval is five seconds and can be configured from 1–60 seconds. Prefer asynchronous jobs (`wait: false`) so long responses do not monopolize a tool call. While a job is nonterminal, status-check the same ID rather than resubmitting its prompt.
+
+The UI adapter prefers stable test IDs and accessible names, caches only control signatures, and falls back to semantic rescanning when selectors stop working. Attachment upload similarly prefers the native file input, then the composer attachment control and accessible upload action. Generated-file discovery checks the final assistant turn semantically, with authenticated-request and direct browser-download paths. No website automation can promise survival across every future redesign; `sync_chatgpt_options(force_rescan: true)` is the option-control repair path, while `inspect_chatgpt_conversation` preserves a browser-level escape hatch for completion and response-file UI changes.
+
+## Privacy
+
+Prompts, exact explicit attachment contents, and responses pass through the selected signed-in ChatGPT web account. The plugin keeps a private, local automation copy of the selected profile’s cookies and site storage so regular Chrome and the background browser can run concurrently. It does not copy saved passwords, browsing history, bookmarks, downloads, or arbitrary tabs. Temporary HEIC/HEIF JPEGs live only under the bridge state directory for the active job and are removed afterward; source photos are never modified.
+
+Repository bundles are local-only until a separate attachment call transmits the returned ZIP. Their staging directories are removed after creation, while completed ZIPs and manifests remain private local files until the user deletes them. Bundling excludes common secrets and reports warnings, but it is not a substitute for repository-specific security review.

@@ -1,0 +1,38 @@
+{
+  "name": "chatgpt-chrome-bridge",
+  "version": "0.1.0+codex.20260722163916",
+  "description": "Give Codex a context-isolated ChatGPT worker with sanitized repository bundles, durable Pro status, generated-file retrieval, and browser inspection.",
+  "author": {
+    "name": "Jackson Stone"
+  },
+  "license": "MIT",
+  "keywords": [
+    "chatgpt",
+    "chrome",
+    "browser-automation",
+    "model-selection"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ChatGPT Chrome Bridge",
+    "shortDescription": "Parallel research with safe repository bundles.",
+    "longDescription": "Gives Codex a parallel, context-isolated ChatGPT worker for self-contained general research, exploration, planning, generic design, drafting, explicit file analysis, deliberately authorized sanitized repository snapshots, generated artifacts, and second opinions. ChatGPT receives only the submitted prompt plus exact user-authorized attachments and cannot see the Codex conversation, project, repository, unlisted files, terminal, local UI, or other agents. It creates local Git-aware repository ZIPs with mandatory runtime/credential exclusions, no symlink traversal, conservative secret-pattern scanning, whole-file omission, hashes, and review manifests without transmitting them automatically. It validates upload limits, converts HEIC/HEIF photos to temporary JPEG copies without changing originals, keeps isolated signed-in Chrome workers ready in the background, globally spaces actual submissions, supports hour-plus Pro processing without treating interim progress cards as final, downloads response files with hashes and MCP resource links, and preserves a signed-in browser inspection fail-safe. It discovers current model and reasoning choices and returns each result for Codex to adapt and verify locally.",
+    "developerName": "Jackson Stone",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Delegate a self-contained general research workstream to ChatGPT",
+      "Get a second opinion from my ChatGPT account",
+      "Analyze exact files I explicitly attach to ChatGPT",
+      "Prepare a reviewed sanitized repository ZIP for an authorized ChatGPT attachment",
+      "Have ChatGPT generate a file and retrieve it locally",
+      "Sync the ChatGPT options available to my account"
+    ],
+    "brandColor": "#10A37F"
+  },
+  "mcpServers": "./.mcp.json"
+}
