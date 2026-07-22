@@ -12,14 +12,16 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # The bridge is intentionally macOS-only: it controls the user's installed
+    # Chrome application and relies on macOS profile/keychain conventions.
+    runs-on: macos-latest
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
