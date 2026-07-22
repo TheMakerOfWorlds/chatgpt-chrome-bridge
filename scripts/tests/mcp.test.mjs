@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -13,10 +15,37 @@ const pluginRoot = path.resolve(
 );
 
 test("MCP server advertises the optimized ChatGPT command surface", async (t) => {
+  const fixtureRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "chatgpt-bridge-mcp-test-"),
+  );
+  const stateRoot = path.join(fixtureRoot, "state");
+  const chromeUserData = path.join(fixtureRoot, "chrome");
+  await fs.mkdir(path.join(chromeUserData, "Profile 2"), { recursive: true });
+  await fs.writeFile(
+    path.join(chromeUserData, "Local State"),
+    `${JSON.stringify({
+      profile: {
+        last_used: "Profile 2",
+        info_cache: {
+          "Profile 2": { name: "Test ChatGPT" },
+        },
+      },
+    })}\n`,
+  );
+  t.after(() => fs.rm(fixtureRoot, { recursive: true, force: true }));
+
+  const childEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([, value]) => value !== undefined),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(pluginRoot, "scripts", "mcp-server.mjs")],
     cwd: pluginRoot,
+    env: {
+      ...childEnv,
+      CHATGPT_CHROME_BRIDGE_STATE_DIR: stateRoot,
+      CHATGPT_CHROME_USER_DATA_DIR: chromeUserData,
+    },
   });
   const client = new Client({ name: "bridge-test-client", version: "1.0.0" });
   t.after(() => client.close());
