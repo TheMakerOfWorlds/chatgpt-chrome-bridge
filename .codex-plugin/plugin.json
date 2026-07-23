@@ -1,22 +1,23 @@
 {
   "name": "chatgpt-chrome-bridge",
-  "version": "0.1.0+codex.20260723183609",
-  "description": "Give Codex a context-isolated ChatGPT worker with sanitized repository bundles, durable Pro status, generated-file retrieval, and browser inspection.",
+  "version": "0.1.0+codex.20260723193403",
+  "description": "Give Codex context-isolated ChatGPT reasoning and Grok natural-writing workers through exact signed-in Chrome profiles.",
   "author": {
     "name": "Jackson Stone"
   },
   "license": "MIT",
   "keywords": [
     "chatgpt",
+    "grok",
     "chrome",
     "browser-automation",
     "model-selection"
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "ChatGPT Chrome Bridge",
-    "shortDescription": "Parallel research with safe repository bundles.",
-    "longDescription": "Gives Codex a parallel, context-isolated ChatGPT worker for self-contained general research, exploration, planning, generic design, drafting, explicit file analysis, deliberately authorized sanitized repository snapshots, generated artifacts, and second opinions. ChatGPT receives only the submitted prompt plus exact user-authorized attachments and cannot see the Codex conversation, project, repository, unlisted files, terminal, local UI, or other agents. It creates local Git-aware repository ZIPs with mandatory runtime/credential exclusions, no symlink traversal, conservative secret-pattern scanning, whole-file omission, hashes, and review manifests without transmitting them automatically. It validates upload limits, converts HEIC/HEIF photos to temporary JPEG copies without changing originals, launches isolated Chrome workers off-screen without taking foreground focus, globally spaces actual submissions, supports hour-plus Pro processing without treating interim progress cards as final, downloads response files with hashes and MCP resource links, and closes idle worker browsers after preserving verified refreshed login state. It discovers current model and reasoning choices and returns each result for Codex to adapt and verify locally.",
+    "displayName": "ChatGPT + Grok Bridge",
+    "shortDescription": "ChatGPT reasoning plus Grok natural writing.",
+    "longDescription": "Gives Codex two parallel, context-isolated account-backed workers: ChatGPT for deep reasoning, research, analysis, synthesis, critique, generic planning, safe repository snapshots, and generated artifacts; and Grok for natural prose, rewriting, voice, tone, correspondence, scripts, product copy, and other standalone writing. Both receive only the submitted prompt plus exact user-authorized attachments and cannot see the Codex conversation, project, repository, unlisted files, terminal, local UI, or other agents. The workers bind to configured Chrome profile directories instead of whichever profile is focused, dynamically discover current model choices, launch isolated Chrome off-screen without stealing focus, globally pace actual submissions, support concurrent queues with durable job IDs and status calls, provide browser inspection as a recovery fail-safe, and close idle worker browsers after preserving verified refreshed login state. ChatGPT additionally creates reviewed secret-scanned repository ZIPs and retrieves generated response files. Grok defaults to Fast and files chats in the configured Grok project; ChatGPT defaults to Extra High reasoning and its configured Agents project.",
     "developerName": "Jackson Stone",
     "category": "Productivity",
     "capabilities": [
@@ -26,13 +27,15 @@
     ],
     "defaultPrompt": [
       "Delegate a self-contained general research workstream to ChatGPT",
+      "Use Grok to write or rewrite natural-sounding prose",
+      "Route reasoning to ChatGPT and writing to Grok",
       "Get a second opinion from my ChatGPT account",
       "Analyze exact files I explicitly attach to ChatGPT",
       "Prepare a reviewed sanitized repository ZIP for an authorized ChatGPT attachment",
       "Have ChatGPT generate a file and retrieve it locally",
-      "Sync the ChatGPT options available to my account"
+      "Sync the model options available to my ChatGPT and Grok accounts"
     ],
-    "brandColor": "#10A37F"
+    "brandColor": "#111111"
   },
   "mcpServers": "./.mcp.json"
 }

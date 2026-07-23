@@ -1,7 +1,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-export function responseResourceLinks(data) {
+export function responseResourceLinks(data, { serviceName = "ChatGPT" } = {}) {
   const links = [];
   const seen = new Set();
   const add = ({ filePath, name, description, mimeType, size }) => {
@@ -28,7 +28,7 @@ export function responseResourceLinks(data) {
         filePath: file?.path,
         name: file?.name,
         description:
-          "ChatGPT-generated response file downloaded through the signed-in browser session and verified with the SHA-256 metadata in the structured result.",
+          `${serviceName}-generated response file downloaded through the signed-in browser session and verified with the SHA-256 metadata in the structured result.`,
         mimeType: file?.mimeType,
         size: file?.sizeBytes,
       });
@@ -36,7 +36,7 @@ export function responseResourceLinks(data) {
     if (collection.manifestPath) {
       add({
         filePath: collection.manifestPath,
-        description: "Manifest for the downloaded ChatGPT response files.",
+        description: `Manifest for the downloaded ${serviceName} response files.`,
         mimeType: "application/json",
       });
     }
@@ -64,7 +64,7 @@ export function responseResourceLinks(data) {
   if (data?.screenshotPath) {
     add({
       filePath: data.screenshotPath,
-      description: "Browser fail-safe screenshot of the ChatGPT conversation.",
+      description: `Browser fail-safe screenshot of the ${serviceName} conversation.`,
       mimeType: "image/png",
     });
   }

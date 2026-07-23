@@ -1,7 +1,7 @@
 interface:
   display_name: "ChatGPT Parallel Worker"
-  short_description: "Parallel research with safe repository bundles"
-  default_prompt: "Use $ask-chatgpt-account for standalone research, explicit files, or a reviewed sanitized repository bundle; preserve long-running Pro job IDs and retrieve generated files as local resources."
+  short_description: "Deep reasoning with safe repository bundles"
+  default_prompt: "Use $ask-chatgpt-account for standalone deep reasoning, research, explicit files, or a reviewed sanitized repository bundle; use Grok for natural writing, preserve long-running Pro job IDs, and retrieve generated files as local resources."
 dependencies:
   tools:
     - type: "mcp"

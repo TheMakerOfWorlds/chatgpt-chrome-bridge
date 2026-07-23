@@ -63,6 +63,14 @@ export class ChatGptChromeBridge {
     browserIdleCloseMs = DEFAULT_BROWSER_IDLE_CLOSE_MS,
   } = {}) {
     this.paths = paths;
+    this.serviceName = "ChatGPT";
+    this.serviceHomeUrl = CHATGPT_URL;
+    this.isAllowedServiceUrl = isAllowedChatGptUrl;
+    this.authenticationChecker = authenticationStatus;
+    this.waitAuthenticationChecker = waitForAuthenticationStatus;
+    this.uiDiagnosticsProvider = uiDiagnostics;
+    this.chromeExecutableEnv = "CHATGPT_CHROME_EXECUTABLE";
+    this.saveConfigProvider = saveConfig;
     this.profileStore = new ChromeProfileStore(paths);
     this.workerId = workerId;
     this.submissionPacer = new GlobalSubmissionPacer({ paths, workerId });
@@ -247,14 +255,14 @@ export class ChatGptChromeBridge {
       this.config.profile,
     );
     if (requestedProfile && resolved.directory !== this.config.profile) {
-      this.config = await saveConfig(
+      this.config = await this.saveConfigProvider(
         { ...this.config, profile: resolved.directory },
         this.paths,
       );
     }
-    // ChatGPT's Cloudflare front door challenges true headless Chrome. Keep the
-    // configured "headless" setting as the user-facing background preference,
-    // but implement it with a real headful window positioned off-screen.
+    // Cloudflare-protected account sites can challenge true headless Chrome.
+    // Keep "headless" as the user-facing background preference, but implement
+    // it with a real headful window positioned off-screen.
     const headless = visible ? false : Boolean(this.config.headless);
     const reusable =
       this.context &&
@@ -276,7 +284,7 @@ export class ChatGptChromeBridge {
       } catch {
         throw new Error(
           `Google Chrome was not found at ${this.paths.chromeExecutable}. ` +
-            "Set CHATGPT_CHROME_EXECUTABLE to the Chrome executable path.",
+            `Set ${this.chromeExecutableEnv} to the Chrome executable path.`,
         );
       }
       const runtime = await this.profileStore.prepareWorker(
@@ -291,7 +299,7 @@ export class ChatGptChromeBridge {
           userDataDir: runtime.userDataDir,
           profileDirectory: resolved.directory,
           background: headless,
-          url: CHATGPT_URL,
+          url: this.serviceHomeUrl,
         });
         this.browserProcess = launched.child;
         await this.profileStore.markWorkerBrowser(runtime, launched.child.pid);
@@ -316,7 +324,7 @@ export class ChatGptChromeBridge {
         ) {
           throw new Error(
             "This bridge worker's private Chrome profile is still open. Close that " +
-              "bridge Chrome process and retry the ChatGPT operation.",
+              `bridge Chrome process and retry the ${this.serviceName} operation.`,
           );
         }
         throw error;
@@ -325,7 +333,7 @@ export class ChatGptChromeBridge {
       this.runtimeHeadless = headless;
       const pages = this.context.pages();
       this.page =
-        pages.find((page) => isAllowedChatGptUrl(page.url())) ||
+        pages.find((page) => this.isAllowedServiceUrl(page.url())) ||
         pages.find((page) => !page.isClosed()) ||
         (await this.context.newPage());
       return runtime;
@@ -1159,8 +1167,8 @@ export class ChatGptChromeBridge {
       ),
     };
     if (this.page && !this.page.isClosed()) {
-      result.authentication = await authenticationStatus(this.page);
-      result.ui = await uiDiagnostics(this.page);
+      result.authentication = await this.authenticationChecker(this.page);
+      result.ui = await this.uiDiagnosticsProvider(this.page);
     }
     return result;
   }
@@ -1196,7 +1204,7 @@ export class ChatGptChromeBridge {
       workerRuntime && workerProfile && this.workerAuthenticated,
     );
     if (persistSession && page && !page.isClosed()) {
-      const currentAuthentication = await authenticationStatus(page).catch(
+      const currentAuthentication = await this.authenticationChecker(page).catch(
         () => null,
       );
       if (currentAuthentication?.authenticated) persistSession = true;
@@ -1259,7 +1267,7 @@ export class ChatGptChromeBridge {
     }
     if (persistenceError) {
       throw new Error(
-        `The refreshed ChatGPT session could not be persisted; the recoverable worker copy was retained. ${
+        `The refreshed ${this.serviceName} session could not be persisted; the recoverable worker copy was retained. ${
           persistenceError instanceof Error
             ? persistenceError.message
             : String(persistenceError)
@@ -1277,6 +1285,7 @@ export class ChatGptChromeBridge {
 export class AskJobQueue {
   constructor(bridge) {
     this.bridge = bridge;
+    this.serviceName = bridge?.serviceName || "ChatGPT";
     this.jobs = new Map();
     this.pending = [];
     this.running = 0;
@@ -1287,7 +1296,9 @@ export class AskJobQueue {
     this.prune();
     const id = crypto.randomUUID();
     const { jobLabel, ...askParams } = params;
-    const label = String(jobLabel || askParams.prompt || "ChatGPT job")
+    const label = String(
+      jobLabel || askParams.prompt || `${this.serviceName} job`,
+    )
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 160);
@@ -1361,7 +1372,7 @@ export class AskJobQueue {
         if (job.result) {
           job.result.warnings = [
             ...(job.result.warnings || []),
-            `The ChatGPT response completed, but its refreshed login session could not be persisted: ${
+            `The ${this.serviceName} response completed, but its refreshed login session could not be persisted: ${
               error instanceof Error ? error.message : String(error)
             }`,
           ];
@@ -1407,7 +1418,7 @@ export class AskJobQueue {
 
   get(id) {
     const job = this.jobs.get(id);
-    if (!job) throw new Error(`Unknown ChatGPT job ID: ${id}`);
+    if (!job) throw new Error(`Unknown ${this.serviceName} job ID: ${id}`);
     return job;
   }
 

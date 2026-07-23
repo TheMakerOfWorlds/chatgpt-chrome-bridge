@@ -6,6 +6,13 @@
         "./scripts/mcp-server.mjs"
       ],
       "cwd": "."
+    },
+    "grok-chrome-bridge": {
+      "command": "node",
+      "args": [
+        "./scripts/grok-mcp-server.mjs"
+      ],
+      "cwd": "."
     }
   }
 }

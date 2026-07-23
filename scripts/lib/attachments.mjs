@@ -176,7 +176,7 @@ export async function validateAttachmentPaths(input) {
   if (!Array.isArray(input)) throw new Error("attachments must be an array of paths.");
   if (input.length > MAX_ATTACHMENTS) {
     throw new Error(
-      `At most ${MAX_ATTACHMENTS} files may be attached to one ChatGPT request.`,
+      `At most ${MAX_ATTACHMENTS} files may be attached to one bridge request.`,
     );
   }
 
@@ -331,7 +331,7 @@ export async function prepareAttachments(
           throw new Error(
             `The temporary JPEG for ${item.originalName} is ${formatMib(
               convertedStat.size,
-            )}, above ChatGPT's ${formatMib(MAX_IMAGE_BYTES)} image limit.`,
+            )}, above this bridge's ${formatMib(MAX_IMAGE_BYTES)} image limit.`,
           );
         }
         await fs.chmod(uploadPath, 0o600);
