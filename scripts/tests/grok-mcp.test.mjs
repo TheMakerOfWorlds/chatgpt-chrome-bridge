@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+import { markGrokUnavailable } from "../lib/grok-availability.mjs";
+
 const pluginRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -55,6 +57,8 @@ test("Grok MCP server advertises a context-isolated writing surface", async (t) 
   const listed = await client.listTools();
   const names = listed.tools.map((tool) => tool.name);
   for (const expected of [
+    "get_grok_availability",
+    "verify_grok_availability",
     "list_grok_chrome_profiles",
     "configure_grok_bridge",
     "open_grok_for_login",
@@ -72,6 +76,8 @@ test("Grok MCP server advertises a context-isolated writing surface", async (t) 
   }
   const write = listed.tools.find((tool) => tool.name === "write_with_grok");
   assert.match(write.description, /natural-writing worker/);
+  assert.match(write.description, /proactively and implicitly/);
+  assert.match(write.description, /availability/);
   assert.match(write.description, /Prefer ChatGPT for deep reasoning/);
   assert.match(write.description, /cannot see the Codex conversation/);
   assert.match(write.description, /no worker-role preamble/);
@@ -109,6 +115,22 @@ test("Grok MCP server advertises a context-isolated writing surface", async (t) 
   assert.equal(configured.structuredContent.config.defaultModel, "Fast");
   assert.equal(configured.structuredContent.config.maxConcurrent, 30);
 
+  const availability = await client.callTool({
+    name: "get_grok_availability",
+    arguments: {},
+  });
+  assert.equal(availability.isError, false);
+  assert.equal(availability.structuredContent.state, "unknown");
+  assert.equal(availability.structuredContent.available, false);
+  assert.equal(
+    availability.structuredContent.recommendedAction,
+    "verify_once",
+  );
+  assert.equal(
+    availability.structuredContent.reasonCode,
+    "configuration_changed",
+  );
+
   const status = await client.callTool({
     name: "get_grok_bridge_status",
     arguments: {},
@@ -116,10 +138,37 @@ test("Grok MCP server advertises a context-isolated writing surface", async (t) 
   assert.equal(status.isError, false);
   assert.equal(status.structuredContent.config.profile, "Profile 1");
   assert.equal(status.structuredContent.browserRunning, false);
+  assert.equal(status.structuredContent.availability.state, "unknown");
   assert.equal(
     status.structuredContent.browserLifecycle.activeOperations,
     0,
   );
+
+  await markGrokUnavailable(
+    { availabilityFile: path.join(stateRoot, "availability.json") },
+    {
+      reasonCode: "signed_out",
+      reason: "Signed out for MCP gate test.",
+    },
+  );
+  const blockedWrite = await client.callTool({
+    name: "write_with_grok",
+    arguments: {
+      task: "Write one sentence that must never be submitted.",
+      wait: false,
+    },
+  });
+  assert.equal(blockedWrite.isError, true);
+  assert.match(blockedWrite.structuredContent.error, /marked unavailable/);
+  assert.match(blockedWrite.structuredContent.error, /Do not retry/);
+  const jobs = await client.callTool({
+    name: "list_grok_jobs",
+    arguments: {},
+  });
+  assert.equal(jobs.structuredContent.summary.running, 0);
+  assert.equal(jobs.structuredContent.summary.queued, 0);
+  assert.equal(jobs.structuredContent.summary.failed, 0);
+
   const invalidInspection = await client.callTool({
     name: "inspect_grok_conversation",
     arguments: {},

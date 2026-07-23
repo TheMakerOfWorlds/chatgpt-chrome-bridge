@@ -18,7 +18,7 @@ Use the `chatgpt-chrome-bridge` MCP tools as an independent, account-backed work
 ## Choose the right worker
 
 - Prefer `delegate_research_to_chatgpt` for a separable workstream that can be expressed completely in a prompt: deep background research, hard reasoning, ideation, outlining, comparison, critique, red-teaming, synthesis, generic design, or a second opinion.
-- Prefer the `grok-chrome-bridge` writing worker for natural prose, rewriting, voice, tone, correspondence, scripts, posts, UX/marketing copy, and stylistic variants that need no repository or computer context.
+- Prefer the `grok-chrome-bridge` writing worker for natural prose, rewriting, voice, tone, correspondence, scripts, posts, UX/marketing copy, and stylistic variants that need no repository or computer context. Check its shared availability first; when Grok is logged out or otherwise unavailable, do not keep probing it—use ChatGPT or local Codex for the writing instead.
 - Prefer local tools or a repository-aware subagent when the work requires browsing the repository, discovering which files matter, running commands, editing artifacts, or observing local UI. Use an exact file set or sanitized repository bundle only when the user intentionally authorizes that material for ChatGPT and the benefit justifies external transmission.
 - Use direct authoritative sources when citations, current facts, legal/medical/financial accuracy, or source verification matter. Use ChatGPT as a supplementary perspective unless the user requests only its answer.
 - Do not delegate merely to repeat work Codex already completed. Delegate when the independent result can improve quality, speed, breadth, or confidence.

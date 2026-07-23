@@ -27,6 +27,7 @@ export function grokBridgePaths(env = process.env) {
     stateRoot,
     configFile: path.join(stateRoot, "config.json"),
     cacheFile: path.join(stateRoot, "ui-cache.json"),
+    availabilityFile: path.join(stateRoot, "availability.json"),
     submissionPacerFile: path.join(stateRoot, "submission-pacer.json"),
     submissionPacerLock: path.join(stateRoot, "submission-pacer.lock"),
     profilesRoot: path.join(stateRoot, "profiles"),

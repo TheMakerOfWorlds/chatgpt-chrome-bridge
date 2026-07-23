@@ -4,6 +4,14 @@ import fs from "node:fs/promises";
 import { prepareAttachments } from "./attachments.mjs";
 import { ChatGptChromeBridge, INSPECTION_KEEP_OPEN_MS } from "./bridge.mjs";
 import {
+  DEFAULT_GROK_AVAILABILITY_MAX_AGE_SECONDS,
+  evaluateGrokAvailability,
+  loadGrokAvailability,
+  markGrokAvailable,
+  markGrokUnavailable,
+  markGrokUnknown,
+} from "./grok-availability.mjs";
+import {
   DEFAULT_JOB_TIMEOUT_SECONDS,
   DEFAULT_SUBMISSION_INTERVAL_SECONDS,
   MAX_JOB_TIMEOUT_SECONDS,
@@ -49,6 +57,7 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
     this.uiDiagnosticsProvider = grokUiDiagnostics;
     this.chromeExecutableEnv = "GROK_CHROME_EXECUTABLE";
     this.saveConfigProvider = saveGrokConfig;
+    this.availabilityCheckPromise = null;
   }
 
   async initialize() {
@@ -65,6 +74,158 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
     };
   }
 
+  availabilityIdentity({
+    profile = this.profile?.directory || this.config?.profile || null,
+    projectUrl = this.config?.projectUrl || null,
+  } = {}) {
+    return {
+      profile:
+        typeof profile === "object" && profile
+          ? profile.directory || profile.name || null
+          : profile,
+      projectUrl,
+    };
+  }
+
+  async availabilityStatus({
+    maxAgeSeconds = DEFAULT_GROK_AVAILABILITY_MAX_AGE_SECONDS,
+  } = {}) {
+    const record = await loadGrokAvailability(this.paths);
+    return evaluateGrokAvailability(record, { maxAgeSeconds });
+  }
+
+  async recordAuthentication(
+    authentication,
+    {
+      source = "authentication_check",
+      profile,
+      projectUrl,
+      modelOptions,
+      allowUnavailableRecovery = false,
+    } = {},
+  ) {
+    const identity = this.availabilityIdentity({ profile, projectUrl });
+    if (authentication?.authenticated) {
+      const current = await this.availabilityStatus();
+      if (
+        current.state === "unavailable" &&
+        !allowUnavailableRecovery
+      ) {
+        return current;
+      }
+      await markGrokAvailable(this.paths, {
+        ...identity,
+        source,
+        modelOptions:
+          modelOptions || this.cache?.modelOptions || [],
+      });
+    } else {
+      const reasonCode =
+        authentication?.reason === "login-control-visible"
+          ? "signed_out"
+          : authentication?.reason === "unexpected-origin"
+            ? "unexpected_origin"
+            : "authentication_unverified";
+      const reason =
+        reasonCode === "signed_out"
+          ? "The configured Grok browser session is signed out."
+          : reasonCode === "unexpected_origin"
+            ? `The Grok browser left the allowed grok.com origin${
+                authentication?.url ? ` (${authentication.url})` : ""
+              }.`
+            : "The signed-in Grok composer was not visible after the authentication check.";
+      await markGrokUnavailable(this.paths, {
+        ...identity,
+        source,
+        reasonCode,
+        reason,
+      });
+    }
+    return this.availabilityStatus();
+  }
+
+  async verifyAvailability({
+    profile,
+    projectUrl,
+    maxAgeSeconds = DEFAULT_GROK_AVAILABILITY_MAX_AGE_SECONDS,
+  } = {}) {
+    if (this.availabilityCheckPromise) return this.availabilityCheckPromise;
+    const checking = this.withBrowserActivity(
+      async () => {
+        try {
+          const opened = await this.openGrok({
+            profile,
+            visible: false,
+            forceNavigation: true,
+            targetUrl: this.destination(projectUrl),
+            allowAvailabilityRecovery: true,
+          });
+          const availability = await this.availabilityStatus({
+            maxAgeSeconds,
+          });
+          return {
+            ...availability,
+            verifiedLive: true,
+            authentication: {
+              authenticated: opened.authenticated,
+              reason: opened.reason,
+              url: opened.url,
+            },
+          };
+        } catch (error) {
+          const identity = this.availabilityIdentity({
+            profile,
+            projectUrl: this.destination(projectUrl),
+          });
+          await markGrokUnavailable(this.paths, {
+            ...identity,
+            source: "verify_grok_availability",
+            reasonCode: "verification_error",
+            reason: `Grok availability verification failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+          return {
+            ...(await this.availabilityStatus({ maxAgeSeconds })),
+            verifiedLive: true,
+            verificationError:
+              error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+      { idleDelayMs: 30_000 },
+    );
+    this.availabilityCheckPromise = checking;
+    try {
+      return await checking;
+    } finally {
+      if (this.availabilityCheckPromise === checking) {
+        this.availabilityCheckPromise = null;
+      }
+    }
+  }
+
+  async ensureAvailableForUse() {
+    let availability = await this.availabilityStatus();
+    if (availability.available) return availability;
+    if (availability.state === "unavailable") {
+      throw new Error(
+        `Grok is marked unavailable (${availability.reasonCode}): ${
+          availability.reason
+        } Do not retry this job through Grok. Use ChatGPT or local tools until login is deliberately recovered.`,
+      );
+    }
+    availability = await this.verifyAvailability();
+    if (!availability.available) {
+      throw new Error(
+        `Grok is not available after one live verification (${availability.reasonCode}): ${
+          availability.reason
+        } Do not retry this job through Grok. Use ChatGPT or local tools until availability is recovered.`,
+      );
+    }
+    return availability;
+  }
+
   async configure({
     profile,
     projectUrl,
@@ -75,6 +236,8 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
     submissionIntervalSeconds,
   } = {}) {
     if (!this.config) await this.initialize();
+    const previousProfile = this.config.profile;
+    const previousProjectUrl = this.config.projectUrl;
     const next = { ...this.config };
     let resolved = null;
     if (profile !== undefined && profile !== null && String(profile).trim()) {
@@ -97,6 +260,18 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
         (typeof headless === "boolean" && headless !== this.runtimeHeadless));
     this.config = await saveGrokConfig(next, this.paths);
     if (requiresRestart) await this.closeBrowser();
+    if (
+      previousProfile !== this.config.profile ||
+      previousProjectUrl !== this.config.projectUrl
+    ) {
+      await markGrokUnknown(this.paths, {
+        ...this.availabilityIdentity(),
+        source: "configure_grok_bridge",
+        reasonCode: "configuration_changed",
+        reason:
+          "The Grok profile or project changed and must be verified before the next submission.",
+      });
+    }
     return {
       config: this.publicConfig(),
       resolvedProfile: resolved,
@@ -131,6 +306,7 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
     visible = false,
     forceNavigation = false,
     targetUrl = undefined,
+    allowAvailabilityRecovery = false,
   } = {}) {
     const browser = await this.ensureBrowser({ profile, visible });
     const destination =
@@ -153,6 +329,12 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
     if (authentication.reason === "login-control-visible") {
       this.workerAuthenticated = false;
     }
+    await this.recordAuthentication(authentication, {
+      source: "open_grok",
+      profile: browser.profile,
+      projectUrl: destination === GROK_URL ? null : destination,
+      allowUnavailableRecovery: allowAvailabilityRecovery,
+    });
     return {
       profile: browser.profile,
       visible: !this.runtimeHeadless,
@@ -189,6 +371,16 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
       profileDirectory: resolved.directory,
       url: this.destination(undefined),
     });
+    await markGrokUnavailable(this.paths, {
+      ...this.availabilityIdentity({
+        profile: resolved,
+        projectUrl: this.destination(undefined),
+      }),
+      source: "open_grok_for_login",
+      reasonCode: "login_in_progress",
+      reason:
+        "A dedicated Grok login window is open. Do not submit Grok work until sign-in is complete and availability is verified.",
+    });
     return {
       profile: resolved,
       visible: true,
@@ -217,6 +409,16 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
       { ...this.config, profile: resolved.directory },
       this.paths,
     );
+    await markGrokUnknown(this.paths, {
+      ...this.availabilityIdentity({
+        profile: resolved,
+        projectUrl: this.destination(undefined),
+      }),
+      source: "refresh_grok_login_from_chrome",
+      reasonCode: "session_refreshed",
+      reason:
+        "The Grok session copy was refreshed and needs one live verification before use.",
+    });
     return {
       profile: resolved,
       copiedAt: runtime.marker.copiedAt,
@@ -275,6 +477,14 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
       models: options.models,
     };
     await writeJsonAtomic(this.paths.cacheFile, this.cache);
+    await markGrokAvailable(this.paths, {
+      ...this.availabilityIdentity({
+        profile: this.profile,
+        projectUrl: opened.projectUrl,
+      }),
+      source: "sync_grok_options",
+      modelOptions: options.modelOptions,
+    });
     return {
       profile: this.profile,
       projectUrl: opened.projectUrl,
@@ -303,6 +513,11 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
     }
     await page.waitForTimeout(500);
     const authentication = await waitForGrokAuthenticationStatus(page);
+    await this.recordAuthentication(authentication, {
+      source: "open_grok_job",
+      profile: browser.profile,
+      projectUrl: destination === GROK_URL ? null : destination,
+    });
     if (!authentication.authenticated) {
       if (ownedPage) await page.close().catch(() => {});
       throw new Error(
@@ -547,6 +762,11 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
       });
       await page.waitForTimeout(750);
       const authentication = await waitForGrokAuthenticationStatus(page);
+      await this.recordAuthentication(authentication, {
+        source: "inspect_grok_conversation",
+        profile: browser.profile,
+        projectUrl: resolved.record?.projectUrl,
+      });
       if (!authentication.authenticated) {
         throw new Error(
           "The configured automation profile is not signed in to Grok. Refresh or complete login before inspecting this conversation.",
@@ -636,6 +856,13 @@ export class GrokChromeBridge extends ChatGptChromeBridge {
 
   async status() {
     const result = await super.status();
+    if (result.authentication) {
+      await this.recordAuthentication(result.authentication, {
+        source: "get_grok_bridge_status",
+        profile: result.activeProfile,
+      });
+    }
+    result.availability = await this.availabilityStatus();
     result.cachedModelOptions = this.cache?.modelOptions || [];
     delete result.cachedReasoningOptions;
     delete result.responseFileRoot;

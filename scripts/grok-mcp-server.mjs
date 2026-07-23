@@ -54,7 +54,7 @@ function register(name, config, handler) {
         {
           error: error instanceof Error ? error.message : String(error),
           recovery:
-            "Check get_grok_bridge_status. If signed out, copy the Grok session from Jackson Stone Personal with refresh_grok_login_from_chrome or use open_grok_for_login. If controls changed, run sync_grok_options with force_rescan=true. Never duplicate a nonterminal job.",
+            "Check get_grok_availability first. If it reports unavailable, do not retry Grok: use ChatGPT or local tools until the user deliberately restores login. After recovery, copy the Grok session from Jackson Stone Personal with refresh_grok_login_from_chrome or use open_grok_for_login, then run verify_grok_availability once. If controls changed, run sync_grok_options with force_rescan=true. Never duplicate a nonterminal job.",
         },
         true,
       );
@@ -84,6 +84,7 @@ function buildWritingPrompt({
 }
 
 async function createAndMaybeWait(params, wait, timeoutSeconds) {
+  await bridge.ensureAvailableForUse();
   const job = jobs.create(params);
   if (!wait) return job;
   const waited = await jobs.wait(
@@ -95,6 +96,65 @@ async function createAndMaybeWait(params, wait, timeoutSeconds) {
   if (waited.status === "failed") throw new Error(waited.error);
   return waited;
 }
+
+register(
+  "get_grok_availability",
+  {
+    title: "Get Grok Availability",
+    description:
+      "Read Grok's shared cached availability without opening a browser. Codex should call this before implicitly choosing Grok as a natural-writing worker. available means use Grok; stale or unknown means call verify_grok_availability once; unavailable means skip Grok without retrying and route the work to ChatGPT or local Codex instead. Every writing tool enforces the same gate.",
+    inputSchema: {
+      max_age_seconds: z
+        .number()
+        .int()
+        .min(60)
+        .max(86_400)
+        .default(900)
+        .describe(
+          "How fresh the last successful live authentication check must be; defaults to 15 minutes",
+        ),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
+  },
+  (args) =>
+    bridge.availabilityStatus({
+      maxAgeSeconds: args.max_age_seconds,
+    }),
+);
+
+register(
+  "verify_grok_availability",
+  {
+    title: "Verify Grok Availability",
+    description:
+      "Perform one silent live authentication check in the configured background Grok profile without sending a prompt. Use exactly once when get_grok_availability says stale or unknown, or after the user has deliberately restored login. Do not repeatedly call this while Grok is marked unavailable.",
+    inputSchema: {
+      profile: z.string().min(1).optional(),
+      project_url: z.string().optional(),
+      max_age_seconds: z
+        .number()
+        .int()
+        .min(60)
+        .max(86_400)
+        .default(900),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
+  },
+  (args) =>
+    bridge.verifyAvailability({
+      profile: args.profile,
+      projectUrl: args.project_url,
+      maxAgeSeconds: args.max_age_seconds,
+    }),
+);
 
 register(
   "list_grok_chrome_profiles",
@@ -260,7 +320,7 @@ register(
   {
     title: "Write With Grok",
     description:
-      "Use the signed-in Grok account as a context-isolated natural-writing worker for prose, rewrites, voice, tone, messaging, scripts, posts, correspondence, product/UX copy, and other standalone language work. Prefer this over a research subagent when the work needs no repository, terminal, local UI, or private project inspection and the main value is natural writing. Prefer ChatGPT for deep reasoning, research, complex analysis, factual synthesis, or verification. Grok receives only this tool call plus exact explicitly authorized attachments; it cannot see the Codex conversation, current task, project/repository, unlisted files, terminal, local UI, or other agents. The configured Grok project only organizes chats and supplies no Codex context. The prompt begins directly with the task and contains no worker-role preamble. New chats can run concurrently, actual submits are globally spaced five seconds apart, and status is retained by job ID.",
+      "Codex may choose this proactively and implicitly whenever a context-isolated natural-writing worker is a good fit: prose, rewrites, voice, tone, messaging, scripts, posts, correspondence, product/UX copy, and other standalone language work. Prefer this over a research subagent when the work needs no repository, terminal, local UI, or private project inspection and the main value is natural writing. Prefer ChatGPT for deep reasoning, research, complex analysis, factual synthesis, or verification. The tool enforces shared availability: fresh authentication proceeds, stale/unknown state gets one live check, and a recorded logout fails fast without submitting so Codex can use ChatGPT or local tools. Grok receives only this tool call plus exact explicitly authorized attachments; it cannot see the Codex conversation, current task, project/repository, unlisted files, terminal, local UI, or other agents. The configured Grok project only organizes chats and supplies no Codex context. The prompt begins directly with the task and contains no worker-role preamble. New chats can run concurrently, actual submits are globally spaced five seconds apart, and status is retained by job ID.",
     inputSchema: {
       task: z
         .string()
@@ -337,7 +397,7 @@ register(
   {
     title: "Ask Grok",
     description:
-      "Pass one complete user-authored standalone prompt to the selected signed-in Grok website account with no added framing. Use write_with_grok for Codex-created writing assignments. Grok sees only the prompt and exact authorized attachments—not the Codex conversation, local project, repository, terminal, UI, or unlisted files. Prefer ChatGPT for deep reasoning/research and Grok for natural writing.",
+      "Pass one complete user-authored standalone prompt to the selected signed-in Grok website account with no added framing. Use write_with_grok for Codex-created writing assignments. The shared availability gate skips submission after a recorded logout and performs only one verification for stale/unknown state. Grok sees only the prompt and exact authorized attachments—not the Codex conversation, local project, repository, terminal, UI, or unlisted files. Prefer ChatGPT for deep reasoning/research and Grok for natural writing.",
     inputSchema: {
       prompt: z
         .string()
@@ -481,7 +541,7 @@ register(
   {
     title: "Get Grok Bridge Status",
     description:
-      "Report configured profile/project/default model, browser lifecycle and visibility, authentication/UI diagnostics, cached Grok options, shared submission pacing, aggregate phases, and recent jobs. The configured profile directory is authoritative even when another Chrome profile is focused.",
+      "Report configured profile/project/default model, durable availability and its age, browser lifecycle and visibility, live authentication/UI diagnostics when a browser is already open, cached Grok options, shared submission pacing, aggregate phases, and recent jobs. This does not open a browser. The configured profile directory is authoritative even when another Chrome profile is focused.",
     inputSchema: {},
     annotations: {
       readOnlyHint: true,

@@ -1,6 +1,6 @@
 ---
 name: use-grok-writing
-description: "Delegate context-isolated natural writing, rewriting, voice, tone, correspondence, scripts, posts, UX or marketing copy, and other standalone prose to the signed-in Grok account. Grok receives only the explicit prompt and attachments; it cannot see the Codex conversation, project, repository, unlisted files, terminal, local UI, private state, or other agents. Prefer Grok over a research subagent when natural writing is the main goal and no computer/project context is needed; prefer ChatGPT for deep reasoning, thinking, research, complex analysis, and verification. Use Jackson Stone Personal (Profile 1) and the configured Grok project. Supports exact file attachments, dynamic model sync, concurrent jobs, durable status, browser inspection, background launch, and idle close."
+description: "Use proactively and implicitly whenever Codex judges context-isolated natural writing, rewriting, voice, tone, correspondence, scripts, posts, UX/marketing copy, or standalone prose is a good fit. Check shared Grok availability first: use it when available, verify once when stale/unknown, and skip it without retrying when logged out/unavailable. Grok receives only the explicit prompt and attachments; it cannot see the Codex conversation, project, repository, unlisted files, terminal, local UI, private state, or other agents. Prefer Grok over a research subagent for natural writing needing no computer/project context; prefer ChatGPT for deep reasoning, research, analysis, and verification. Use Jackson Stone Personal (Profile 1) and the configured Grok project."
 ---
 
 # Use Grok as a Codex Writing Worker
@@ -14,6 +14,15 @@ Use the `grok-chrome-bridge` MCP tools for standalone natural-language work thro
 - Prefer local Codex tools or a repository-aware subagent when the assignment requires inspecting the repository, finding relevant files, reading terminal output, editing local artifacts, running commands, or using private project state.
 - A writing assignment may include facts or an outline already established by Codex. Put every required fact explicitly in `task` or `context`; Grok cannot infer anything from this conversation.
 - Do not delegate merely to repeat finished work. Use Grok when its writing quality or an independent stylistic pass materially improves the result.
+
+## Check availability before routing
+
+1. Call `get_grok_availability` before implicitly routing a writing task to Grok. This is a fast shared-state read and does not open Chrome.
+2. If it returns `available`, use Grok. If it returns `stale` or `unknown`, call `verify_grok_availability` exactly once; proceed only if that returns `available`.
+3. If it returns `unavailable`, do not call `write_with_grok`, `ask_grok`, or repeatedly probe/login. Route the task to ChatGPT or complete it locally. Only attempt recovery when the user asks for it or confirms that login was restored.
+4. `write_with_grok` and `ask_grok` enforce the same gate. A fresh shared check proceeds immediately; a stale/unknown check is verified once; a recorded logout fails before a prompt is queued or submitted.
+
+Availability is stored per machine under the shared Grok bridge state, so separate Codex tasks and MCP processes see the same last verified result. A successful authentication check remains fresh for 15 minutes. Every real Grok authentication touch updates it; once any worker detects logout, later workers skip Grok instead of repeatedly opening it.
 
 ## Enforce the context boundary
 
