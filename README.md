@@ -9,8 +9,10 @@ The configured **Agents** ChatGPT project is an organizational destination for n
 1. Install the plugin from the personal marketplace and start a new Codex task.
 2. The default profile is **Jackson Stone Personal**. Say: “Open ChatGPT so I can sign in to the research worker.”
 3. To change it, say: “List my Chrome profiles and configure the ChatGPT worker to use _name_.”
-4. Finish sign-in in the Chrome window, then say: “Sync my ChatGPT options.”
+4. Finish sign-in in the Chrome window, quit that dedicated bridge Chrome instance completely (Command-Q on macOS), then say: “Sync my ChatGPT options.” Closing only its tab or window can leave the private profile locked.
 5. You can then say: “Delegate the market research portion to my ChatGPT worker,” “Ask ChatGPT _prompt_ using Pro,” or “Send these two exact photos to ChatGPT and ask whether a chair is visible.”
+
+If the selected regular Chrome profile is already signed in to ChatGPT, say: “Refresh the ChatGPT worker login from Chrome.” The bridge copies only the supported session state, then the regular and automation browsers continue in separate profile directories.
 
 Delegated prompts begin with the task itself, without a generic worker-role preamble. This installation routes new delegated chats to the configured **Agents** project at `https://chatgpt.com/g/g-p-6a5e648cac488191befbdf735bb011fb/project` so the account workspace stays organized. Pass another `project_url`, or clear the configured project, when a task should go elsewhere.
 
@@ -59,7 +61,9 @@ Each job reports a phase: `queued`, `preparing`, `waiting_to_submit`, `generatin
 
 The skill allows implicit invocation, so a new Codex task can choose the worker without an explicit `$ask-chatgpt-account` mention. Its decision rule prefers ChatGPT for separable knowledge work or explicit bounded file analysis and keeps repository browsing, local discovery, commands, and edits with Codex or a suitable local subagent.
 
-The normal automation browser stays alive for the MCP server process. Because ChatGPT's Cloudflare front door challenges true headless Chrome, background mode launches real native Chrome with its window positioned off-screen; it remains fast and persistent without appearing in the working area. Codex attaches afterward through a random loopback-only DevTools port. This avoids Playwright's launcher flags and preserves the same macOS keychain/cookie environment used during native sign-in. One-time sign-in opens the private bridge profile without automation or remote debugging. Close the login window after signing in so the background worker can reopen that profile. The bridge never automates navigation outside `https://chatgpt.com` or OpenAI authentication origins.
+The normal automation browser stays alive for the MCP server process. Because ChatGPT's Cloudflare front door challenges true headless Chrome, background mode launches real native Chrome with its window positioned off-screen; it remains fast and persistent without appearing in the working area. Codex attaches afterward through a random loopback-only DevTools port. This avoids Playwright's launcher flags and preserves the same macOS keychain/cookie environment used during native sign-in. One-time sign-in opens the private bridge profile without automation or remote debugging. Quit that dedicated Chrome instance after signing in so the background worker can reopen the profile; closing only its tab or window may leave Chrome running. The launcher waits through a startup grace period and reports an error when Chrome exits immediately, which commonly means an earlier bridge login process still owns the private profile. The bridge never automates navigation outside `https://chatgpt.com` or OpenAI authentication origins.
+
+Worker profiles are disposable, but refreshed login state is not: after a verified authenticated worker becomes idle, Chrome is closed so its session databases are flushed, then the supported session state is promoted back into the reusable seed under a cross-process lock before the worker directory is removed. A later Codex task therefore starts from the most recently refreshed session instead of the original copied cookies.
 
 ## Configuration
 

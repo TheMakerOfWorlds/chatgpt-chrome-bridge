@@ -55,6 +55,7 @@ export class ChatGptChromeBridge {
     this.profile = null;
     this.runtimeHeadless = null;
     this.browserWindowVisible = false;
+    this.workerAuthenticated = false;
     this.cache = {};
     this.liveJobPages = new Map();
     this.inspectionPages = new Map();
@@ -258,12 +259,17 @@ export class ChatGptChromeBridge {
       });
     }
     await browser.page.waitForTimeout(500);
+    const authentication = await waitForAuthenticationStatus(browser.page);
+    if (authentication.authenticated) this.workerAuthenticated = true;
+    if (authentication.reason === "login-control-visible") {
+      this.workerAuthenticated = false;
+    }
     return {
       profile: browser.profile,
       visible: !this.runtimeHeadless,
       url: browser.page.url(),
       projectUrl: destination === CHATGPT_URL ? null : destination,
-      ...(await waitForAuthenticationStatus(browser.page)),
+      ...authentication,
     };
   }
 
@@ -288,7 +294,7 @@ export class ChatGptChromeBridge {
       );
     }
     const runtime = await this.profileStore.prepare(resolved);
-    const launched = launchNativeLogin({
+    const launched = await launchNativeLogin({
       executable: this.paths.chromeExecutable,
       userDataDir: runtime.userDataDir,
       profileDirectory: resolved.directory,
@@ -303,8 +309,10 @@ export class ChatGptChromeBridge {
       authenticated: null,
       processId: launched.pid,
       instructions:
-        "Complete sign-in in this ordinary Chrome window, then close the bridge Chrome " +
-        "window completely before running sync_chatgpt_options. The login window has no " +
+        "Complete sign-in in this ordinary Chrome window, then quit this dedicated " +
+        "bridge Chrome instance completely (Command-Q on macOS) before running " +
+        "sync_chatgpt_options. Closing only its tab or window can leave Chrome running. " +
+        "The login window has no " +
         "Playwright, automation, or remote-debugging flags, so Google OAuth can treat it as normal Chrome.",
     };
   }
@@ -373,7 +381,7 @@ export class ChatGptChromeBridge {
       reasoningOptions: options.reasoningOptions,
     };
     await writeJsonAtomic(this.paths.cacheFile, this.cache);
-    return {
+    const result = {
       profile: this.profile,
       projectUrl: opened.projectUrl,
       authenticated: opened.authenticated,
@@ -382,6 +390,18 @@ export class ChatGptChromeBridge {
       reasoningOptions: options.reasoningOptions,
       forceRescan,
     };
+    if (!this.liveJobPages.size && !this.inspectionPages.size) {
+      try {
+        await this.closeBrowser();
+      } catch (error) {
+        result.warnings = [
+          `ChatGPT options synced, but the refreshed session could not be persisted: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        ];
+      }
+    }
+    return result;
   }
 
   async openTaskPage({ profile, projectUrl, newChat = true } = {}) {
@@ -411,6 +431,7 @@ export class ChatGptChromeBridge {
           "Run open_chatgpt_for_login, complete sign-in, then sync options.",
       );
     }
+    this.workerAuthenticated = true;
     return {
       page,
       ownedPage,
@@ -997,6 +1018,20 @@ export class ChatGptChromeBridge {
     const browserProcess = this.browserProcess;
     const context = this.context;
     const workerRuntime = this.workerRuntime;
+    const workerProfile = this.profile;
+    const page = this.page;
+    let persistSession = Boolean(
+      workerRuntime && workerProfile && this.workerAuthenticated,
+    );
+    if (persistSession && page && !page.isClosed()) {
+      const currentAuthentication = await authenticationStatus(page).catch(
+        () => null,
+      );
+      if (currentAuthentication?.authenticated) persistSession = true;
+      if (currentAuthentication?.reason === "login-control-visible") {
+        persistSession = false;
+      }
+    }
     this.browserConnection = null;
     this.browserProcess = null;
     this.context = null;
@@ -1005,6 +1040,7 @@ export class ChatGptChromeBridge {
     this.profile = null;
     this.runtimeHeadless = null;
     this.browserWindowVisible = false;
+    this.workerAuthenticated = false;
     this.liveJobPages.clear();
     this.inspectionPages.clear();
     if (browser) await browser.close().catch(() => {});
@@ -1029,7 +1065,27 @@ export class ChatGptChromeBridge {
         });
       }
     }
-    await this.profileStore.removeWorker(workerRuntime).catch(() => {});
+    let persistenceError = null;
+    if (persistSession) {
+      try {
+        await this.profileStore.persistWorker(workerProfile, workerRuntime);
+      } catch (error) {
+        persistenceError = error;
+      }
+    }
+    if (!persistenceError) {
+      await this.profileStore.removeWorker(workerRuntime).catch(() => {});
+    }
+    if (persistenceError) {
+      throw new Error(
+        `The refreshed ChatGPT session could not be persisted; the recoverable worker copy was retained. ${
+          persistenceError instanceof Error
+            ? persistenceError.message
+            : String(persistenceError)
+        }`,
+        { cause: persistenceError },
+      );
+    }
   }
 }
 
@@ -1039,6 +1095,7 @@ export class AskJobQueue {
     this.jobs = new Map();
     this.pending = [];
     this.running = 0;
+    this.closing = false;
   }
 
   create(params) {
@@ -1096,16 +1153,36 @@ export class AskJobQueue {
   }
 
   pump() {
+    if (this.closing) return;
     const limit = this.concurrencyLimit();
     while (this.running < limit && this.pending.length) {
       const { job, params } = this.pending.shift();
       this.running += 1;
-      this.run(job, params).finally(() => {
-        this.running -= 1;
-        job.resolve();
-        this.pump();
-      });
+      this.run(job, params).finally(() => this.finish(job));
     }
+  }
+
+  async finish(job) {
+    this.running -= 1;
+    if (this.running === 0 && this.pending.length === 0) {
+      this.closing = true;
+      try {
+        await this.bridge.closeBrowser?.();
+      } catch (error) {
+        if (job.result) {
+          job.result.warnings = [
+            ...(job.result.warnings || []),
+            `The ChatGPT response completed, but its refreshed login session could not be persisted: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ];
+        }
+      } finally {
+        this.closing = false;
+      }
+    }
+    job.resolve();
+    this.pump();
   }
 
   async run(job, params) {

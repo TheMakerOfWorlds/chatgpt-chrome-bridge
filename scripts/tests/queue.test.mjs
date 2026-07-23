@@ -199,3 +199,22 @@ test("retains terminal job records for 24 hours", () => {
   assert.equal(queue.jobs.has("recent"), true);
   assert.equal(queue.jobs.has("expired"), false);
 });
+
+test("closes the browser to persist session state when the queue becomes idle", async () => {
+  let closeCalls = 0;
+  const bridge = {
+    config: { maxConcurrent: 1 },
+    async ask() {
+      return { response: "done" };
+    },
+    async closeBrowser() {
+      closeCalls += 1;
+    },
+  };
+  const queue = new AskJobQueue(bridge);
+  const created = queue.create({ prompt: "Test persistence." });
+
+  const completed = await queue.wait(created.id, 2);
+  assert.equal(completed.status, "completed");
+  assert.equal(closeCalls, 1);
+});

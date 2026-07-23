@@ -189,7 +189,7 @@ register(
   {
     title: "Open ChatGPT for Login",
     description:
-      "Open the bridge's private profile in ordinary native Chrome with no automation or remote-debugging flags. Use for one-time sign-in, including Google OAuth. After signing in, the user must close that Chrome window before background automation resumes.",
+      "Open the bridge's private profile in ordinary native Chrome with no automation or remote-debugging flags. Use for one-time sign-in, including Google OAuth. After signing in, the user must quit that dedicated Chrome instance completely (Command-Q on macOS); closing only its tab or window can leave the profile locked. The tool reports an error if Chrome exits before a usable login window is ready.",
     inputSchema: {
       profile: z.string().min(1).optional().describe("Chrome profile name or directory"),
     },

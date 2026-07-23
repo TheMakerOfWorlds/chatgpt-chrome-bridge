@@ -234,8 +234,13 @@ async function pathExists(target) {
   }
 }
 
-async function replaceCopy(source, destination) {
-  if (!(await pathExists(source))) return false;
+async function replaceCopy(source, destination, { removeMissing = false } = {}) {
+  if (!(await pathExists(source))) {
+    if (removeMissing) {
+      await fs.rm(destination, { recursive: true, force: true });
+    }
+    return false;
+  }
   await fs.mkdir(path.dirname(destination), { recursive: true });
   const temp = `${destination}.syncing-${process.pid}-${crypto.randomUUID()}`;
   await fs.cp(source, temp, {
@@ -256,6 +261,7 @@ async function copySessionState({
   sourceProfileDirectory,
   targetUserDataDir,
   targetProfileDirectory,
+  removeMissing = false,
 }) {
   const sourceProfile = path.join(sourceUserDataDir, sourceProfileDirectory);
   const targetProfile = path.join(targetUserDataDir, targetProfileDirectory);
@@ -265,6 +271,7 @@ async function copySessionState({
     await replaceCopy(
       path.join(sourceUserDataDir, "Local State"),
       path.join(targetUserDataDir, "Local State"),
+      { removeMissing },
     )
   ) {
     copied.push("Local State");
@@ -274,12 +281,45 @@ async function copySessionState({
       await replaceCopy(
         path.join(sourceProfile, relative),
         path.join(targetProfile, relative),
+        { removeMissing },
       )
     ) {
       copied.push(relative);
     }
   }
   return copied;
+}
+
+async function withSessionSyncLock(
+  lockDirectory,
+  callback,
+  { timeoutMs = 15_000, staleMs = 120_000 } = {},
+) {
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      await fs.mkdir(lockDirectory);
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const stat = await fs.stat(lockDirectory).catch(() => null);
+      if (stat && Date.now() - stat.mtimeMs > staleMs) {
+        await fs.rm(lockDirectory, { recursive: true, force: true });
+        continue;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error(
+          `Timed out waiting for session synchronization lock at ${lockDirectory}.`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  try {
+    return await callback();
+  } finally {
+    await fs.rm(lockDirectory, { recursive: true, force: true });
+  }
 }
 
 export class ChromeProfileStore {
@@ -317,22 +357,27 @@ export class ChromeProfileStore {
     const runtime = this.runtime(profile);
     const marker = await readJson(runtime.markerFile);
     if (marker && !force) return { ...runtime, copied: false, marker };
-
-    const copied = await copySessionState({
-      sourceUserDataDir: this.paths.chromeUserData,
-      sourceProfileDirectory: profile.directory,
-      targetUserDataDir: runtime.userDataDir,
-      targetProfileDirectory: profile.directory,
-    });
-    const nextMarker = {
-      version: 1,
-      sourceProfile: profile.directory,
-      sourceName: profile.name,
-      copiedAt: new Date().toISOString(),
-      copied,
-    };
-    await writeJsonAtomic(runtime.markerFile, nextMarker);
-    return { ...runtime, copied: true, marker: nextMarker };
+    await fs.mkdir(runtime.root, { recursive: true });
+    return withSessionSyncLock(
+      path.join(runtime.root, ".session-sync.lock"),
+      async () => {
+        const copied = await copySessionState({
+          sourceUserDataDir: this.paths.chromeUserData,
+          sourceProfileDirectory: profile.directory,
+          targetUserDataDir: runtime.userDataDir,
+          targetProfileDirectory: profile.directory,
+        });
+        const nextMarker = {
+          version: 1,
+          sourceProfile: profile.directory,
+          sourceName: profile.name,
+          copiedAt: new Date().toISOString(),
+          copied,
+        };
+        await writeJsonAtomic(runtime.markerFile, nextMarker);
+        return { ...runtime, copied: true, marker: nextMarker };
+      },
+    );
   }
 
   async prepareWorker(profile, workerId, { force = false } = {}) {
@@ -342,12 +387,16 @@ export class ChromeProfileStore {
     if (marker && !force) return { ...runtime, copied: false, marker };
 
     await fs.rm(runtime.root, { recursive: true, force: true });
-    const copied = await copySessionState({
-      sourceUserDataDir: seed.userDataDir,
-      sourceProfileDirectory: profile.directory,
-      targetUserDataDir: runtime.userDataDir,
-      targetProfileDirectory: profile.directory,
-    });
+    const copied = await withSessionSyncLock(
+      path.join(seed.root, ".session-sync.lock"),
+      () =>
+        copySessionState({
+          sourceUserDataDir: seed.userDataDir,
+          sourceProfileDirectory: profile.directory,
+          targetUserDataDir: runtime.userDataDir,
+          targetProfileDirectory: profile.directory,
+        }),
+    );
     const nextMarker = {
       version: 1,
       workerId: runtime.workerId,
@@ -370,6 +419,42 @@ export class ChromeProfileStore {
       browserPid,
       launchedAt: new Date().toISOString(),
     });
+  }
+
+  async persistWorker(profile, workerRuntime) {
+    if (!workerRuntime?.workerId) {
+      throw new Error("A prepared worker runtime is required to persist a session.");
+    }
+    const expected = this.worker(profile, workerRuntime.workerId);
+    if (path.resolve(expected.root) !== path.resolve(workerRuntime.root)) {
+      throw new Error("Refusing to persist session state from an unexpected worker path.");
+    }
+    const seed = this.runtime(profile);
+    await fs.mkdir(seed.root, { recursive: true });
+    return withSessionSyncLock(
+      path.join(seed.root, ".session-sync.lock"),
+      async () => {
+        const copied = await copySessionState({
+          sourceUserDataDir: workerRuntime.userDataDir,
+          sourceProfileDirectory: profile.directory,
+          targetUserDataDir: seed.userDataDir,
+          targetProfileDirectory: profile.directory,
+          removeMissing: true,
+        });
+        const persistedAt = new Date().toISOString();
+        const nextMarker = {
+          version: 2,
+          sourceProfile: profile.directory,
+          sourceName: profile.name,
+          copiedAt: persistedAt,
+          copied,
+          persistedFromWorker: workerRuntime.workerId,
+          persistedAt,
+        };
+        await writeJsonAtomic(seed.markerFile, nextMarker);
+        return { ...seed, copied: true, marker: nextMarker };
+      },
+    );
   }
 
   async removeWorker(runtime) {

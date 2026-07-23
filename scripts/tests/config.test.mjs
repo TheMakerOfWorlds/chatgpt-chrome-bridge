@@ -164,4 +164,18 @@ test("copies session data into an isolated runtime profile without history", asy
   await assert.rejects(
     fs.access(path.join(workerA.userDataDir, "Profile 2", "History")),
   );
+
+  await fs.writeFile(
+    path.join(workerA.userDataDir, "Profile 2", "Network", "Cookies"),
+    "refreshed-cookie-db",
+  );
+  const persisted = await store.persistWorker(profile, workerA);
+  assert.equal(persisted.marker.persistedFromWorker, "agent-a");
+  assert.equal(
+    await fs.readFile(
+      path.join(persisted.userDataDir, "Profile 2", "Network", "Cookies"),
+      "utf8",
+    ),
+    "refreshed-cookie-db",
+  );
 });

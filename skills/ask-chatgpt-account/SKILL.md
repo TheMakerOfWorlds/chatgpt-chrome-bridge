@@ -33,6 +33,8 @@ Use the `chatgpt-chrome-bridge` MCP tools as an independent, account-backed work
 
 The bridge runs new-chat jobs in separate tabs, with up to 30 simultaneous jobs per Codex worker by default. To prevent a submission stampede, every actual Send action passes through one shared cross-process gate and is spaced at least five seconds after the preceding attempt. This pacing is global across Codex workers that share the bridge state directory; generation continues in parallel after submission. Additional local jobs remain queued without blocking new tool calls. A ChatGPT `Pro` response taking an hour or longer can be normal. The configured response deadline defaults to two hours and can be raised to four hours. Different Codex tasks/agents use isolated worker copies of the signed-in session, so one task's Chrome process does not lock out another. Keep each returned job ID with the Codex task that created it.
 
+When a worker queue becomes idle, the bridge closes that worker's Chrome process to flush its session databases, promotes verified refreshed session state back into the reusable seed under a cross-process lock, and only then removes the disposable worker directory. Treat a session-persistence warning as actionable even when the ChatGPT response itself completed.
+
 Use `ask_chatgpt` for a direct user-authored prompt that should pass through with minimal framing. Use `delegate_research_to_chatgpt` for a Codex-created subtask; it frames the prompt as a research/analysis assignment and records the requested deliverable.
 
 ## Prepare repository context safely
@@ -84,7 +86,7 @@ Use `ask_chatgpt` for a direct user-authored prompt that should pass through wit
 - Call `configure_chatgpt_bridge` to remember a different profile, ChatGPT project URL, or default options.
 - Use `max_concurrent` to change the per-Codex-worker parallel-tab limit (1–30). This installation defaults to 30. ChatGPT account limits or local memory pressure may still reduce practical throughput; excess work stays queued rather than being discarded.
 - Use `submission_interval_seconds` to change the shared cross-worker gap between actual Send actions (1–60 seconds). Keep the configured five-second default unless the user requests otherwise.
-- Call `open_chatgpt_for_login` when authentication is missing. It launches ordinary native Chrome without automation flags so Google OAuth works. Ask the user to finish sign-in and then close that bridge Chrome window completely before calling `sync_chatgpt_options`.
+- Call `open_chatgpt_for_login` when authentication is missing. It launches ordinary native Chrome without automation flags so Google OAuth works. Ask the user to finish sign-in and then quit that dedicated bridge Chrome instance completely (Command-Q on macOS) before calling `sync_chatgpt_options`; closing only its tab or window can leave the private profile locked. An early-exit error usually means an earlier login process still owns that profile, so do not report that a usable window opened.
 - Treat a visible ChatGPT `Log in` control as signed out even when the public guest composer is available. Do not sync options or delegate until the login control is gone.
 - Call `refresh_login_from_chrome` only when refreshing the private automation session from regular Chrome is necessary or requested. It restarts the bridge browser.
 - Call `sync_chatgpt_options` to refresh the model/reasoning labels visible to that account.
