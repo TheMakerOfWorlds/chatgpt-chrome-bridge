@@ -144,6 +144,11 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
     inspectConversation.inputSchema.properties.browser_visibility.enum,
     ["unchanged", "visible", "background"],
   );
+  assert.equal(
+    inspectConversation.inputSchema.properties.keep_open.default,
+    false,
+  );
+  assert.match(inspectConversation.description, /closes when the operation becomes idle/);
   const configure = listed.tools.find(
     (tool) => tool.name === "configure_chatgpt_bridge",
   );
@@ -186,6 +191,19 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
   assert.equal(jobStatus.isError, false);
   assert.equal(jobStatus.structuredContent.globalSubmissionPacer.global, true);
   assert.ok(Array.isArray(jobStatus.structuredContent.jobs));
+  const bridgeStatus = await client.callTool({
+    name: "get_chatgpt_bridge_status",
+    arguments: {},
+  });
+  assert.equal(bridgeStatus.isError, false);
+  assert.equal(
+    bridgeStatus.structuredContent.browserLifecycle.activeOperations,
+    0,
+  );
+  assert.equal(
+    bridgeStatus.structuredContent.browserLifecycle.idleCloseScheduled,
+    false,
+  );
   const profiles = await client.callTool({ name: "list_chrome_profiles", arguments: {} });
   assert.equal(profiles.isError, false);
   assert.ok(Array.isArray(profiles.structuredContent.profiles));

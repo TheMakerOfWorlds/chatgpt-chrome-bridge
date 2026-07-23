@@ -36,10 +36,31 @@ import {
   waitForConversationHydration,
 } from "./ui-adapter.mjs";
 
+export const DEFAULT_BROWSER_IDLE_CLOSE_MS = 1_500;
+export const INSPECTION_KEEP_OPEN_MS = 2 * 60 * 1000;
+
+async function waitForProcessExit(child, timeoutMs) {
+  if (!child || child.exitCode !== null) return true;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener?.("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(child.exitCode !== null), timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
 export class ChatGptChromeBridge {
   constructor({
     paths = bridgePaths(),
     workerId = `${process.pid}-${crypto.randomUUID()}`,
+    browserIdleCloseMs = DEFAULT_BROWSER_IDLE_CLOSE_MS,
   } = {}) {
     this.paths = paths;
     this.profileStore = new ChromeProfileStore(paths);
@@ -48,6 +69,7 @@ export class ChatGptChromeBridge {
     this.workerRuntime = null;
     this.config = null;
     this.browserStartPromise = null;
+    this.browserClosePromise = null;
     this.browserConnection = null;
     this.browserProcess = null;
     this.context = null;
@@ -60,6 +82,17 @@ export class ChatGptChromeBridge {
     this.liveJobPages = new Map();
     this.inspectionPages = new Map();
     this.conversationRecords = new Map();
+    this.browserActivityCount = 0;
+    this.browserIdleCloseMs = Math.max(
+      0,
+      Number.isFinite(browserIdleCloseMs)
+        ? Number(browserIdleCloseMs)
+        : DEFAULT_BROWSER_IDLE_CLOSE_MS,
+    );
+    this.browserIdleCloseTimer = null;
+    this.browserIdleCloseDueAt = null;
+    this.lastBrowserClosedAt = null;
+    this.lastBrowserCloseError = null;
   }
 
   async initialize() {
@@ -133,8 +166,81 @@ export class ChatGptChromeBridge {
     };
   }
 
+  hasBrowserResources() {
+    return Boolean(
+      this.browserConnection ||
+        this.browserProcess ||
+        this.context ||
+        this.workerRuntime,
+    );
+  }
+
+  cancelBrowserIdleClose() {
+    if (this.browserIdleCloseTimer) {
+      clearTimeout(this.browserIdleCloseTimer);
+      this.browserIdleCloseTimer = null;
+    }
+    this.browserIdleCloseDueAt = null;
+  }
+
+  acquireBrowserActivity() {
+    this.cancelBrowserIdleClose();
+    this.browserActivityCount += 1;
+    let released = false;
+    return ({ idleDelayMs = this.browserIdleCloseMs } = {}) => {
+      if (released) return;
+      released = true;
+      this.browserActivityCount = Math.max(0, this.browserActivityCount - 1);
+      if (this.browserActivityCount === 0) {
+        this.scheduleBrowserIdleClose(idleDelayMs);
+      }
+    };
+  }
+
+  async withBrowserActivity(operation, { idleDelayMs } = {}) {
+    const release = this.acquireBrowserActivity();
+    try {
+      return await operation();
+    } finally {
+      release({ idleDelayMs });
+    }
+  }
+
+  scheduleBrowserIdleClose(delayMs = this.browserIdleCloseMs) {
+    this.cancelBrowserIdleClose();
+    if (this.browserActivityCount > 0 || !this.hasBrowserResources()) return false;
+    const boundedDelay = Math.max(0, Number(delayMs) || 0);
+    this.browserIdleCloseDueAt = new Date(
+      Date.now() + boundedDelay,
+    ).toISOString();
+    const timer = setTimeout(() => {
+      if (this.browserIdleCloseTimer !== timer) return;
+      this.browserIdleCloseTimer = null;
+      this.browserIdleCloseDueAt = null;
+      if (this.browserActivityCount > 0) return;
+      this.closeBrowser().catch(() => {});
+    }, boundedDelay);
+    timer.unref?.();
+    this.browserIdleCloseTimer = timer;
+    return true;
+  }
+
+  async closeBrowserIfIdle() {
+    if (this.browserActivityCount > 0) {
+      this.scheduleBrowserIdleClose();
+      return { closed: false, reason: "active-operations" };
+    }
+    if (!this.hasBrowserResources()) {
+      this.cancelBrowserIdleClose();
+      return { closed: false, reason: "not-running" };
+    }
+    await this.closeBrowser();
+    return { closed: true, reason: "idle" };
+  }
+
   async ensureBrowser({ profile: requestedProfile, visible = false } = {}) {
     if (!this.config) await this.initialize();
+    if (this.browserClosePromise) await this.browserClosePromise;
     const resolved = await resolveChromeProfile(
       requestedProfile,
       this.paths,
@@ -365,7 +471,24 @@ export class ChatGptChromeBridge {
     return opened;
   }
 
-  async syncOptions({ profile, projectUrl, forceRescan = false } = {}) {
+  async syncOptions(options = {}) {
+    const result = await this.withBrowserActivity(() =>
+      this.performSyncOptions(options),
+    );
+    try {
+      await this.closeBrowserIfIdle();
+    } catch (error) {
+      result.warnings = [
+        ...(result.warnings || []),
+        `ChatGPT options synced, but the refreshed session could not be persisted: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ];
+    }
+    return result;
+  }
+
+  async performSyncOptions({ profile, projectUrl, forceRescan = false } = {}) {
     const opened = await this.requireChatPage({ profile, projectUrl });
     const cacheForProfile =
       !forceRescan && this.cache.profile === this.profile.directory
@@ -381,7 +504,7 @@ export class ChatGptChromeBridge {
       reasoningOptions: options.reasoningOptions,
     };
     await writeJsonAtomic(this.paths.cacheFile, this.cache);
-    const result = {
+    return {
       profile: this.profile,
       projectUrl: opened.projectUrl,
       authenticated: opened.authenticated,
@@ -390,18 +513,6 @@ export class ChatGptChromeBridge {
       reasoningOptions: options.reasoningOptions,
       forceRescan,
     };
-    if (!this.liveJobPages.size && !this.inspectionPages.size) {
-      try {
-        await this.closeBrowser();
-      } catch (error) {
-        result.warnings = [
-          `ChatGPT options synced, but the refreshed session could not be persisted: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        ];
-      }
-    }
-    return result;
   }
 
   async openTaskPage({ profile, projectUrl, newChat = true } = {}) {
@@ -472,7 +583,11 @@ export class ChatGptChromeBridge {
     }
   }
 
-  async ask({
+  async ask(options = {}) {
+    return this.withBrowserActivity(() => this.performAsk(options));
+  }
+
+  async performAsk({
     jobId = null,
     prompt,
     attachments = [],
@@ -894,13 +1009,27 @@ export class ChatGptChromeBridge {
     }
   }
 
-  async inspectConversation({
+  async inspectConversation(options = {}) {
+    const keepOpen = Boolean(options.keepOpen);
+    const result = await this.withBrowserActivity(
+      () => this.performInspectConversation(options),
+      {
+        idleDelayMs: keepOpen
+          ? INSPECTION_KEEP_OPEN_MS
+          : this.browserIdleCloseMs,
+      },
+    );
+    if (!keepOpen) await this.closeBrowserIfIdle();
+    return result;
+  }
+
+  async performInspectConversation({
     jobId,
     conversationUrl,
     profile,
     browserVisibility = "unchanged",
     captureScreenshot = true,
-    keepOpen = true,
+    keepOpen = false,
   } = {}) {
     const resolved = await this.resolveConversationPage({
       jobId,
@@ -942,7 +1071,21 @@ export class ChatGptChromeBridge {
     }
   }
 
-  async collectConversationFiles({
+  async collectConversationFiles(options = {}) {
+    const keepOpen = Boolean(options.keepOpen);
+    const result = await this.withBrowserActivity(
+      () => this.performCollectConversationFiles(options),
+      {
+        idleDelayMs: keepOpen
+          ? INSPECTION_KEEP_OPEN_MS
+          : this.browserIdleCloseMs,
+      },
+    );
+    if (!keepOpen) await this.closeBrowserIfIdle();
+    return result;
+  }
+
+  async performCollectConversationFiles({
     jobId,
     conversationUrl,
     profile,
@@ -997,6 +1140,15 @@ export class ChatGptChromeBridge {
       inspectionPages: new Set(
         Array.from(this.inspectionPages.values()).filter((page) => !page.isClosed()),
       ).size,
+      browserLifecycle: {
+        activeOperations: this.browserActivityCount,
+        closing: Boolean(this.browserClosePromise),
+        idleCloseScheduled: Boolean(this.browserIdleCloseTimer),
+        idleCloseDueAt: this.browserIdleCloseDueAt,
+        idleCloseDelayMs: this.browserIdleCloseMs,
+        lastClosedAt: this.lastBrowserClosedAt,
+        lastCloseError: this.lastBrowserCloseError,
+      },
       responseFileRoot: path.join(this.paths.stateRoot, "response-files"),
       inspectionRoot: path.join(this.paths.stateRoot, "inspections"),
       lastOptionSync: this.cache?.syncedAt || null,
@@ -1014,12 +1166,32 @@ export class ChatGptChromeBridge {
   }
 
   async closeBrowser() {
+    this.cancelBrowserIdleClose();
+    if (this.browserClosePromise) return this.browserClosePromise;
+    const closing = this.performCloseBrowser();
+    this.browserClosePromise = closing;
+    try {
+      const result = await closing;
+      if (result.closed) this.lastBrowserClosedAt = new Date().toISOString();
+      this.lastBrowserCloseError = null;
+      return result;
+    } catch (error) {
+      this.lastBrowserCloseError =
+        error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      if (this.browserClosePromise === closing) this.browserClosePromise = null;
+    }
+  }
+
+  async performCloseBrowser() {
     const browser = this.browserConnection;
     const browserProcess = this.browserProcess;
     const context = this.context;
     const workerRuntime = this.workerRuntime;
     const workerProfile = this.profile;
     const page = this.page;
+    const hadResources = this.hasBrowserResources();
     let persistSession = Boolean(
       workerRuntime && workerProfile && this.workerAuthenticated,
     );
@@ -1043,26 +1215,35 @@ export class ChatGptChromeBridge {
     this.workerAuthenticated = false;
     this.liveJobPages.clear();
     this.inspectionPages.clear();
-    if (browser) await browser.close().catch(() => {});
-    else if (context) await context.close().catch(() => {});
+
+    if (browser) {
+      try {
+        const session = await browser.newBrowserCDPSession();
+        try {
+          await session.send("Browser.close");
+        } catch {
+          // Browser.close normally tears down the CDP transport before the
+          // command response can arrive.
+        } finally {
+          await session.detach().catch(() => {});
+        }
+      } catch {
+        // The SIGTERM/SIGKILL fallback below still guarantees process cleanup.
+      }
+      await browser.close().catch(() => {});
+    } else if (context) {
+      await context.close().catch(() => {});
+    }
+
+    if (browserProcess?.exitCode === null) {
+      await waitForProcessExit(browserProcess, 1_500);
+    }
     if (browserProcess?.exitCode === null) {
       browserProcess.kill("SIGTERM");
-      await new Promise((resolve) => {
-        const timer = setTimeout(resolve, 1_500);
-        browserProcess.once("exit", () => {
-          clearTimeout(timer);
-          resolve();
-        });
-      });
+      await waitForProcessExit(browserProcess, 1_500);
       if (browserProcess.exitCode === null) {
         browserProcess.kill("SIGKILL");
-        await new Promise((resolve) => {
-          const timer = setTimeout(resolve, 1_000);
-          browserProcess.once("exit", () => {
-            clearTimeout(timer);
-            resolve();
-          });
-        });
+        await waitForProcessExit(browserProcess, 1_000);
       }
     }
     let persistenceError = null;
@@ -1086,6 +1267,10 @@ export class ChatGptChromeBridge {
         { cause: persistenceError },
       );
     }
+    return {
+      closed: hadResources,
+      persistedSession: Boolean(persistSession),
+    };
   }
 }
 
@@ -1167,7 +1352,11 @@ export class AskJobQueue {
     if (this.running === 0 && this.pending.length === 0) {
       this.closing = true;
       try {
-        await this.bridge.closeBrowser?.();
+        if (typeof this.bridge.closeBrowserIfIdle === "function") {
+          await this.bridge.closeBrowserIfIdle();
+        } else {
+          await this.bridge.closeBrowser?.();
+        }
       } catch (error) {
         if (job.result) {
           job.result.warnings = [

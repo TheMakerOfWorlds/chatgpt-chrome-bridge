@@ -548,7 +548,9 @@ register(
       keep_open: z
         .boolean()
         .default(false)
-        .describe("Keep the recovered browser tab open for a later inspection call"),
+        .describe(
+          "Keep the recovered browser tab open for a later inspection call for up to two idle minutes; false closes the standalone recovery browser immediately after collection",
+        ),
       profile: z.string().min(1).optional().describe("Chrome profile name or directory"),
     },
     annotations: {
@@ -609,7 +611,7 @@ register(
   {
     title: "Inspect ChatGPT Conversation",
     description:
-      "Browser fail-safe for an existing or live ChatGPT job. Reconnect to the exact conversation using the signed-in bridge profile and return current Pro activity signals, interim/final evidence, latest assistant text, detected response-file controls, visible page text, UI diagnostics, and an optional screenshot. Use this when completion or file extraction looks uncertain; it never resubmits the prompt. browser_visibility can bring native Chrome on-screen for direct Codex/browser control or return it to the background afterward.",
+      "Browser fail-safe for an existing or live ChatGPT job. Reconnect to the exact conversation using the signed-in bridge profile and return current Pro activity signals, interim/final evidence, latest assistant text, detected response-file controls, visible page text, UI diagnostics, and an optional screenshot. Use this when completion or file extraction looks uncertain; it never resubmits the prompt. browser_visibility can bring native Chrome on-screen for direct Codex/browser control or return it to the background afterward. The recovered browser closes when the operation becomes idle unless keep_open is explicitly requested.",
     inputSchema: {
       job_id: z.string().uuid().optional(),
       conversation_url: z
@@ -626,8 +628,10 @@ register(
       capture_screenshot: z.boolean().default(true),
       keep_open: z
         .boolean()
-        .default(true)
-        .describe("Keep the inspected conversation tab available for follow-up inspection"),
+        .default(false)
+        .describe(
+          "Keep the inspected conversation tab available for follow-up inspection for up to two idle minutes; false closes the worker immediately after the standalone inspection",
+        ),
       profile: z.string().min(1).optional().describe("Chrome profile name or directory"),
     },
     annotations: {
@@ -715,7 +719,7 @@ register(
   {
     title: "Get ChatGPT Bridge Status",
     description:
-      "Report bridge health, configuration, browser visibility/inspection state, response-file roots, global submission-pacer timing, cached ChatGPT options, and an aggregate job/phase summary. Use list_chatgpt_jobs for individual job IDs, progress, files, and phases. Nonterminal jobs remain active even when Pro takes an hour or longer; do not submit duplicates.",
+      "Report bridge health, configuration, browser visibility/inspection state, idle-close lifecycle state, response-file roots, global submission-pacer timing, cached ChatGPT options, and an aggregate job/phase summary. Use list_chatgpt_jobs for individual job IDs, progress, files, and phases. Nonterminal jobs remain active even when Pro takes an hour or longer; do not submit duplicates.",
     inputSchema: {},
     annotations: {
       readOnlyHint: true,
@@ -735,7 +739,7 @@ register(
   {
     title: "Stop ChatGPT Bridge Browser",
     description:
-      "Close this Codex worker's background/visible Chrome process. Other Codex workers remain independent. Configuration and the signed-in seed session remain for the next start.",
+      "Explicitly close this Codex worker's background/visible Chrome process. Normal job queues already close automatically when idle. Other Codex workers remain independent, and verified refreshed session state is persisted for the next start.",
     inputSchema: {},
     annotations: {
       readOnlyHint: false,

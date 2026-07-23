@@ -6,6 +6,6 @@ dependencies:
   tools:
     - type: "mcp"
       value: "chatgpt-chrome-bridge"
-      description: "Context-isolated ChatGPT worker with local repository bundling, generated-file retrieval, durable Pro status, and browser inspection"
+      description: "Context-isolated ChatGPT worker with focus-safe background launch, idle auto-close, local repository bundling, generated-file retrieval, durable Pro status, and browser inspection"
 policy:
   allow_implicit_invocation: true

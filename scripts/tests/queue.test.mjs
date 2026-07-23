@@ -207,8 +207,12 @@ test("closes the browser to persist session state when the queue becomes idle", 
     async ask() {
       return { response: "done" };
     },
-    async closeBrowser() {
+    async closeBrowserIfIdle() {
       closeCalls += 1;
+      return { closed: true, reason: "idle" };
+    },
+    async closeBrowser() {
+      throw new Error("queue should use activity-aware idle close");
     },
   };
   const queue = new AskJobQueue(bridge);
