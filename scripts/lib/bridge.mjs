@@ -121,7 +121,6 @@ export class ChatGptChromeBridge {
     profile,
     projectUrl,
     headless,
-    defaultModel,
     defaultReasoning,
     timeoutSeconds,
     maxConcurrent,
@@ -136,7 +135,6 @@ export class ChatGptChromeBridge {
     }
     if (typeof headless === "boolean") next.headless = headless;
     if (projectUrl !== undefined) next.projectUrl = normalizeProjectUrl(projectUrl);
-    if (defaultModel !== undefined) next.defaultModel = defaultModel || "auto";
     if (defaultReasoning !== undefined) {
       next.defaultReasoning = defaultReasoning || "auto";
     }
@@ -163,7 +161,6 @@ export class ChatGptChromeBridge {
       profile: this.config?.profile || null,
       projectUrl: this.config?.projectUrl || null,
       headless: this.config?.headless ?? true,
-      defaultModel: this.config?.defaultModel || "auto",
       defaultReasoning: this.config?.defaultReasoning || "Extra High",
       timeoutSeconds:
         this.config?.timeoutSeconds || DEFAULT_CONFIG.timeoutSeconds,
@@ -502,13 +499,14 @@ export class ChatGptChromeBridge {
       !forceRescan && this.cache.profile === this.profile.directory
         ? this.cache.signatures || {}
         : {};
-    const options = await discoverAvailableOptions(this.page, cacheForProfile);
+    const options = await discoverAvailableOptions(this.page, cacheForProfile, {
+      includeModels: false,
+    });
     this.cache = {
       version: 1,
       profile: this.profile.directory,
       syncedAt: new Date().toISOString(),
       signatures: options.signatures,
-      modelOptions: options.modelOptions,
       reasoningOptions: options.reasoningOptions,
     };
     await writeJsonAtomic(this.paths.cacheFile, this.cache);
@@ -517,7 +515,6 @@ export class ChatGptChromeBridge {
       projectUrl: opened.projectUrl,
       authenticated: opened.authenticated,
       syncedAt: this.cache.syncedAt,
-      modelOptions: options.modelOptions,
       reasoningOptions: options.reasoningOptions,
       forceRescan,
     };
@@ -601,7 +598,6 @@ export class ChatGptChromeBridge {
     attachments = [],
     profile,
     projectUrl,
-    model,
     reasoning,
     newChat = true,
     allowFallback = false,
@@ -624,7 +620,6 @@ export class ChatGptChromeBridge {
     let opened = null;
     let taskPage = null;
     let conversationUrl = null;
-    const requestedModel = model || this.config.defaultModel || "auto";
     const requestedReasoning =
       reasoning || this.config.defaultReasoning || "auto";
     try {
@@ -641,12 +636,6 @@ export class ChatGptChromeBridge {
           status: "preparing",
         });
       }
-      const modelSelection = await this.selectWithRepair(
-        taskPage,
-        "model",
-        requestedModel,
-        allowFallback,
-      );
       const reasoningSelection = await this.selectWithRepair(
         taskPage,
         "reasoning",
@@ -654,9 +643,7 @@ export class ChatGptChromeBridge {
         allowFallback,
       );
       const longRunning = [
-        requestedModel,
         requestedReasoning,
-        modelSelection.selected,
         reasoningSelection.selected,
       ].some((value) =>
         /(?:^|\b)(?:pro|deep research|extended research)(?:\b|$)/i.test(
@@ -684,7 +671,6 @@ export class ChatGptChromeBridge {
         this.rememberConversation(jobId, {
           conversationUrl,
           status: "generating",
-          model: modelSelection,
           reasoning: reasoningSelection,
           longRunning,
         });
@@ -725,11 +711,6 @@ export class ChatGptChromeBridge {
         },
       });
       const warnings = [];
-      if (modelSelection.fallback) {
-        warnings.push(
-          `Requested model “${requestedModel}” was mapped to “${modelSelection.selected}”.`,
-        );
-      }
       if (reasoningSelection.fallback) {
         warnings.push(
           `Requested reasoning “${requestedReasoning}” was mapped to “${reasoningSelection.selected}”.`,
@@ -829,7 +810,6 @@ export class ChatGptChromeBridge {
         response: response.text,
         profile: opened.profile,
         projectUrl: opened.projectUrl,
-        model: modelSelection,
         reasoning: reasoningSelection,
         conversationUrl,
         elapsedMs: response.elapsedMs,
@@ -1160,7 +1140,6 @@ export class ChatGptChromeBridge {
       responseFileRoot: path.join(this.paths.stateRoot, "response-files"),
       inspectionRoot: path.join(this.paths.stateRoot, "inspections"),
       lastOptionSync: this.cache?.syncedAt || null,
-      cachedModelOptions: this.cache?.modelOptions || [],
       cachedReasoningOptions: this.cache?.reasoningOptions || [],
       globalSubmissionPacer: await this.submissionPacer.status(
         this.config.submissionIntervalSeconds,

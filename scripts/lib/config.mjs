@@ -40,7 +40,6 @@ export const DEFAULT_CONFIG = Object.freeze({
   profile: null,
   projectUrl: null,
   headless: true,
-  defaultModel: "auto",
   defaultReasoning: "Extra High",
   timeoutSeconds: DEFAULT_JOB_TIMEOUT_SECONDS,
   maxConcurrent: MAX_CONCURRENT_JOBS,
@@ -127,6 +126,7 @@ export async function saveConfig(config, paths = bridgePaths()) {
       ),
     ),
   };
+  delete normalized.defaultModel;
   await writeJsonAtomic(paths.configFile, normalized);
   return normalized;
 }

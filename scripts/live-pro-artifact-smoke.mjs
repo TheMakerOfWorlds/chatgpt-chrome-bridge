@@ -51,7 +51,6 @@ try {
   line("options_synced", {
     profile: synced.profile,
     projectUrl: synced.projectUrl,
-    modelOptions: synced.modelOptions,
     reasoningOptions: synced.reasoningOptions,
   });
 
@@ -128,7 +127,6 @@ try {
   line("live_test_complete", {
     jobId,
     conversationUrl: terminal.result?.conversationUrl,
-    model: terminal.result?.model,
     reasoning: terminal.result?.reasoning,
     completionSignal: terminal.result?.completionSignal,
     responseCompletion: terminal.result?.responseCompletion,

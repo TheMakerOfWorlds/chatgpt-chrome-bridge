@@ -570,6 +570,138 @@ test("prefers the composer intelligence menu over model words in sidebar history
   assert.equal(options.signatures.modelTrigger.text, "Extra High");
 });
 
+test("expands Advanced and exposes only leaf Effort options when requested", async (t) => {
+  const browser = await chromium.launch({
+    executablePath: chromeExecutable,
+    headless: true,
+  });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main>
+      <form onsubmit="return false">
+        <div id="prompt-textarea" role="textbox" contenteditable="true"></div>
+        <button id="intelligence-trigger" type="button" aria-haspopup="menu" aria-expanded="false">Extra High</button>
+      </form>
+      <div id="intelligence-menu" role="menu" hidden>
+        <div id="power" role="menuitem" aria-label="Power"></div>
+        <div id="advanced" role="menuitem" aria-label="Show advanced options" aria-expanded="false">Advanced</div>
+        <div id="advanced-options" hidden>
+          <div id="model-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-state="closed">Model GPT-5.6 Sol</div>
+          <div id="effort-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-state="closed">Effort Extra High</div>
+        </div>
+      </div>
+      <div id="model-menu" role="menu" hidden>
+        <div role="menuitemradio" aria-checked="true" data-state="checked">GPT-5.6 Sol</div>
+        <div role="menuitemradio" aria-checked="false" data-state="unchecked">GPT-5.5</div>
+        <div role="menuitemradio" aria-checked="false" data-state="unchecked">o3</div>
+      </div>
+      <div id="effort-menu" role="menu" hidden>
+        <div role="menuitemradio" aria-checked="false" data-state="unchecked">Instant</div>
+        <div role="menuitemradio" aria-checked="false" data-state="unchecked">Medium</div>
+        <div role="menuitemradio" aria-checked="false" data-state="unchecked">High</div>
+        <div role="menuitemradio" aria-checked="true" data-state="checked">Extra High</div>
+        <div role="menuitemradio" aria-checked="false" data-state="unchecked">Pro</div>
+      </div>
+    </main>
+    <script>
+      const intelligence = document.querySelector('#intelligence-trigger');
+      const root = document.querySelector('#intelligence-menu');
+      const advanced = document.querySelector('#advanced');
+      const advancedOptions = document.querySelector('#advanced-options');
+      const modelTrigger = document.querySelector('#model-trigger');
+      const effortTrigger = document.querySelector('#effort-trigger');
+      const modelMenu = document.querySelector('#model-menu');
+      const effortMenu = document.querySelector('#effort-menu');
+      const closeAll = () => {
+        root.hidden = true;
+        modelMenu.hidden = true;
+        effortMenu.hidden = true;
+        advancedOptions.hidden = true;
+        advanced.setAttribute('aria-label', 'Show advanced options');
+        advanced.setAttribute('aria-expanded', 'false');
+        modelTrigger.setAttribute('aria-expanded', 'false');
+        modelTrigger.dataset.state = 'closed';
+        effortTrigger.setAttribute('aria-expanded', 'false');
+        effortTrigger.dataset.state = 'closed';
+        intelligence.setAttribute('aria-expanded', 'false');
+      };
+      intelligence.onclick = () => {
+        root.hidden = false;
+        intelligence.setAttribute('aria-expanded', 'true');
+        if (document.body.dataset.preexpanded === 'true') {
+          advancedOptions.hidden = false;
+          advanced.setAttribute('aria-label', 'Show compact options');
+          advanced.setAttribute('aria-expanded', 'true');
+        }
+      };
+      advanced.onclick = () => {
+        document.body.dataset.advancedClicks = String(Number(document.body.dataset.advancedClicks || 0) + 1);
+        advancedOptions.hidden = false;
+        advanced.setAttribute('aria-label', 'Show compact options');
+        advanced.setAttribute('aria-expanded', 'true');
+      };
+      modelTrigger.onclick = () => {
+        modelMenu.hidden = false;
+        modelTrigger.setAttribute('aria-expanded', 'true');
+        modelTrigger.dataset.state = 'open';
+      };
+      effortTrigger.onclick = () => {
+        effortMenu.hidden = false;
+        effortTrigger.setAttribute('aria-expanded', 'true');
+        effortTrigger.dataset.state = 'open';
+      };
+      for (const option of modelMenu.querySelectorAll('[role="menuitemradio"]')) {
+        option.onclick = () => {
+          document.body.dataset.selectedModel = option.textContent.trim();
+          closeAll();
+        };
+      }
+      for (const option of effortMenu.querySelectorAll('[role="menuitemradio"]')) {
+        option.onclick = () => {
+          document.body.dataset.selectedEffort = option.textContent.trim();
+          intelligence.textContent = option.textContent.trim();
+          closeAll();
+        };
+      }
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeAll();
+      });
+    </script>
+  `);
+
+  const options = await discoverAvailableOptions(page, {}, {
+    includeModels: false,
+  });
+  assert.deepEqual(options.modelOptions, []);
+  assert.deepEqual(options.reasoningOptions, [
+    "Instant",
+    "Medium",
+    "High",
+    "Extra High",
+    "Pro",
+  ]);
+  assert.equal(
+    await page.locator("body").getAttribute("data-advanced-clicks"),
+    "1",
+  );
+
+  await page.locator("body").evaluate((element) => {
+    element.dataset.preexpanded = "true";
+  });
+  const effort = await selectPreference(page, "reasoning", "pro");
+  assert.equal(effort.selected, "Pro");
+  assert.equal(
+    await page.locator("body").getAttribute("data-selected-effort"),
+    "Pro",
+  );
+
+  assert.equal(
+    await page.locator("body").getAttribute("data-advanced-clicks"),
+    "1",
+  );
+});
+
 test("waits for a hydrated intelligence menu instead of choosing disabled Send", async (t) => {
   const browser = await chromium.launch({
     executablePath: chromeExecutable,

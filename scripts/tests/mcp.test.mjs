@@ -86,6 +86,8 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
     /no local context beyond any exact explicit attachments/,
   );
   assert.equal(delegate.inputSchema.properties.attachments.maxItems, 10);
+  assert.equal(delegate.inputSchema.properties.model, undefined);
+  assert.ok(delegate.inputSchema.properties.reasoning);
   assert.equal(
     delegate.inputSchema.properties.download_response_files.default,
     true,
@@ -110,6 +112,8 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
     /knows nothing about the Codex task or local project beyond this exact text/,
   );
   assert.equal(directAsk.inputSchema.properties.attachments.maxItems, 10);
+  assert.equal(directAsk.inputSchema.properties.model, undefined);
+  assert.ok(directAsk.inputSchema.properties.reasoning);
   assert.equal(
     directAsk.inputSchema.properties.download_response_files.default,
     true,
@@ -152,6 +156,9 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
   const configure = listed.tools.find(
     (tool) => tool.name === "configure_chatgpt_bridge",
   );
+  assert.equal(configure.inputSchema.properties.default_model, undefined);
+  assert.ok(configure.inputSchema.properties.default_reasoning);
+  assert.match(configure.description, /default model unchanged/);
   assert.equal(
     configure.inputSchema.properties.submission_interval_seconds.maximum,
     60,
@@ -203,6 +210,10 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
   assert.equal(
     bridgeStatus.structuredContent.browserLifecycle.idleCloseScheduled,
     false,
+  );
+  assert.equal(bridgeStatus.structuredContent.cachedModelOptions, undefined);
+  assert.ok(
+    Array.isArray(bridgeStatus.structuredContent.cachedReasoningOptions),
   );
   const profiles = await client.callTool({ name: "list_chrome_profiles", arguments: {} });
   assert.equal(profiles.isError, false);

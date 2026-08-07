@@ -40,6 +40,7 @@ test("defaults to 30 jobs, a two-hour deadline, and five-second pacing", async (
   assert.equal(DEFAULT_CONFIG.maxConcurrent, 30);
   assert.equal(DEFAULT_CONFIG.timeoutSeconds, DEFAULT_JOB_TIMEOUT_SECONDS);
   assert.equal(DEFAULT_CONFIG.timeoutSeconds, 7200);
+  assert.equal(DEFAULT_CONFIG.defaultModel, undefined);
   assert.equal(DEFAULT_STATUS_WAIT_SECONDS, 300);
   assert.equal(MAX_JOB_TIMEOUT_SECONDS, 14_400);
   assert.equal(
@@ -50,6 +51,7 @@ test("defaults to 30 jobs, a two-hour deadline, and five-second pacing", async (
   const normalized = await saveConfig(
     {
       ...DEFAULT_CONFIG,
+      defaultModel: "GPT-5.5",
       maxConcurrent: 300,
       timeoutSeconds: 36_000,
       submissionIntervalSeconds: 600,
@@ -58,6 +60,7 @@ test("defaults to 30 jobs, a two-hour deadline, and five-second pacing", async (
   );
   assert.equal(normalized.maxConcurrent, MAX_CONCURRENT_JOBS);
   assert.equal(normalized.timeoutSeconds, MAX_JOB_TIMEOUT_SECONDS);
+  assert.equal(normalized.defaultModel, undefined);
   assert.equal(
     normalized.submissionIntervalSeconds,
     MAX_SUBMISSION_INTERVAL_SECONDS,

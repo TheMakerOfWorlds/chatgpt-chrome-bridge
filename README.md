@@ -7,7 +7,7 @@ This personal Codex plugin gives Codex two persistent, context-isolated account-
 
 Each service receives only the submitted prompt plus the exact files intentionally listed as attachments. Neither can see the Codex conversation, active project or repository, unlisted files, code, terminal output, local UI, private workspace state, or other agents. Each configured website project is an organizational destination for new conversations, not a connection to the active Codex project. Every delegated assignment must stand on its own.
 
-The plugin binds each worker to an exact Chrome profile directory rather than whichever Chrome window is focused. On Jackson's local Mac, both services use **Jackson Stone Personal** (`Profile 1`) even when many other Chrome profiles are open. Each service gets its own background browser/session seed, queue, shared submission pacer, model cache, status tools, inspection recovery path, and idle-close lifecycle.
+The plugin binds each worker to an exact Chrome profile directory rather than whichever Chrome window is focused. On Jackson's local Mac, both services use **Jackson Stone Personal** (`Profile 1`) even when many other Chrome profiles are open. Each service gets its own background browser/session seed, queue, shared submission pacer, option cache, status tools, inspection recovery path, and idle-close lifecycle.
 
 ## First use
 
@@ -21,7 +21,7 @@ If the selected regular Chrome profile is already signed in to ChatGPT, say: “
 
 Delegated prompts begin with the task itself, without a generic worker-role preamble. This installation routes new delegated chats to the configured **Agents** project at `https://chatgpt.com/g/g-p-6a5e648cac488191befbdf735bb011fb/project` so the account workspace stays organized. Pass another `project_url`, or clear the configured project, when a task should go elsewhere.
 
-The default reasoning choice is **Extra High**. Omit the per-request reasoning argument to select it automatically, or pass another currently visible option for a one-off override.
+The ChatGPT bridge leaves the website's current/default model unchanged—currently **GPT-5.6 Sol**—and does not expose model switching to Codex. It only controls thinking effort. The default effort is **Extra High**; omit the per-request `reasoning` argument to select it automatically, or pass another currently visible effort for a one-off override. When ChatGPT's compact power menu is closed, the adapter expands **Advanced**, opens **Effort**, and then selects the requested leaf option.
 
 ## Grok natural-writing worker
 
@@ -90,7 +90,7 @@ ChatGPT runtime state defaults to `~/Library/Application Support/ChatGPT Chrome 
 
 Both workers default to a two-hour job response deadline configurable up to four hours, 30 concurrent tabs per Codex worker, and a global five-second submission interval configurable from 1–60 seconds. Prefer asynchronous jobs (`wait: false`) for parallel work. While a job is nonterminal, status-check the same ID rather than resubmitting its prompt.
 
-The UI adapter prefers stable test IDs and accessible names, caches only control signatures, and falls back to semantic rescanning when selectors stop working. Attachment upload similarly prefers the native file input, then the composer attachment control and accessible upload action. Generated-file discovery checks the final assistant turn semantically, with authenticated-request and direct browser-download paths. No website automation can promise survival across every future redesign; `sync_chatgpt_options(force_rescan: true)` is the option-control repair path, while `inspect_chatgpt_conversation` preserves a browser-level escape hatch for completion and response-file UI changes.
+The UI adapter prefers stable test IDs and accessible names, caches only control signatures, expands the collapsed Advanced menu, enters the Effort submenu, and falls back to semantic rescanning when selectors stop working. Attachment upload similarly prefers the native file input, then the composer attachment control and accessible upload action. Generated-file discovery checks the final assistant turn semantically, with authenticated-request and direct browser-download paths. No website automation can promise survival across every future redesign; `sync_chatgpt_options(force_rescan: true)` is the option-control repair path, while `inspect_chatgpt_conversation` preserves a browser-level escape hatch for completion and response-file UI changes.
 
 ## Privacy
 

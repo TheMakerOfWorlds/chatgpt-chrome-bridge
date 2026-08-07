@@ -120,7 +120,7 @@ register(
   {
     title: "Configure ChatGPT Bridge",
     description:
-      "Remember a Chrome profile, ChatGPT project, default model/reasoning preferences, response deadline, per-worker concurrency, and the global delay between actual ChatGPT submissions. A profile may be its friendly name or directory (for example, Default or Profile 2). The response deadline defaults to two hours and may be configured up to four hours for long Pro runs.",
+      "Remember a Chrome profile, ChatGPT project, default thinking-effort preference, response deadline, per-worker concurrency, and the global delay between actual ChatGPT submissions. The bridge leaves ChatGPT's current/default model unchanged and only controls thinking effort. A profile may be its friendly name or directory (for example, Default or Profile 2). The response deadline defaults to two hours and may be configured up to four hours for long Pro runs.",
     inputSchema: {
       profile: z.string().min(1).optional().describe("Chrome profile name or directory"),
       project_url: z
@@ -131,10 +131,6 @@ register(
         .boolean()
         .optional()
         .describe("Run normal ChatGPT requests in the background when true"),
-      default_model: z
-        .string()
-        .optional()
-        .describe("Visible ChatGPT model label or auto"),
       default_reasoning: z
         .string()
         .optional()
@@ -176,7 +172,6 @@ register(
       profile: args.profile,
       projectUrl: args.project_url,
       headless: args.headless,
-      defaultModel: args.default_model,
       defaultReasoning: args.default_reasoning,
       timeoutSeconds: args.timeout_seconds,
       maxConcurrent: args.max_concurrent,
@@ -225,7 +220,7 @@ register(
   {
     title: "Sync ChatGPT Options",
     description:
-      "Open ChatGPT in the bridge, verify the session, and dynamically discover model and reasoning choices visible to that account. Force rescanning to repair stale cached control signatures after a UI update.",
+      "Open ChatGPT in the bridge, verify the session, expand Advanced when needed, and dynamically discover the thinking-effort choices visible to that account. The current/default ChatGPT model is left unchanged. Force rescanning to repair stale cached control signatures after a UI update.",
     inputSchema: {
       profile: z.string().min(1).optional().describe("Chrome profile name or directory"),
       project_url: z
@@ -355,7 +350,7 @@ register(
   {
     title: "Delegate Research to ChatGPT",
     description:
-      "Use ChatGPT as a context-isolated worker for deep general research, exploration, brainstorming, comparison, critique, synthesis, planning, generic design, drafting, or a second opinion. ChatGPT receives only the fields in this tool call plus the contents of exact explicitly listed attachments. It cannot see the Codex conversation, active project/repository, unlisted files, code, terminal output, local UI, private workspace state, or other agents' work. The configured ChatGPT project only organizes chats; it does not supply Codex task context. Use this when the assignment is fully self-contained in text or in text plus a small user-authorized attachment set. Each attachment is transmitted to the signed-in ChatGPT account and may be retained under that account/project's data settings; never attach unrelated or secret files. Keep project-aware inspection, implementation, edits, and verification with Codex or a repository-aware subagent. For a requested generated document or other artifact, state its exact format/checks and set expect_response_files=true; the bridge downloads it as a local MCP resource. New-chat jobs run concurrently, but Send actions are globally paced five seconds apart by default. Pro jobs can normally take an hour or longer and may emit small interim cards before the large final answer. Use wait=false for multiple or long jobs, retain every job ID, and collect that same job later. queued, preparing, waiting_to_submit, generating, and collecting_files are healthy nonterminal phases: never submit a duplicate just because a job remains in one. Upload failures are terminal and are not retried automatically. Only consider retrying after the original job reports failed, and inspect its error first.",
+      "Use ChatGPT as a context-isolated worker for deep general research, exploration, brainstorming, comparison, critique, synthesis, planning, generic design, drafting, or a second opinion. The bridge preserves ChatGPT's current/default model and exposes only thinking effort. ChatGPT receives only the fields in this tool call plus the contents of exact explicitly listed attachments. It cannot see the Codex conversation, active project/repository, unlisted files, code, terminal output, local UI, private workspace state, or other agents' work. The configured ChatGPT project only organizes chats; it does not supply Codex task context. Use this when the assignment is fully self-contained in text or in text plus a small user-authorized attachment set. Each attachment is transmitted to the signed-in ChatGPT account and may be retained under that account/project's data settings; never attach unrelated or secret files. Keep project-aware inspection, implementation, edits, and verification with Codex or a repository-aware subagent. For a requested generated document or other artifact, state its exact format/checks and set expect_response_files=true; the bridge downloads it as a local MCP resource. New-chat jobs run concurrently, but Send actions are globally paced five seconds apart by default. Pro jobs can normally take an hour or longer and may emit small interim cards before the large final answer. Use wait=false for multiple or long jobs, retain every job ID, and collect that same job later. queued, preparing, waiting_to_submit, generating, and collecting_files are healthy nonterminal phases: never submit a duplicate just because a job remains in one. Upload failures are terminal and are not retried automatically. Only consider retrying after the original job reports failed, and inspect its error first.",
     inputSchema: {
       task: z
         .string()
@@ -384,7 +379,6 @@ register(
         .string()
         .optional()
         .describe("Optional ChatGPT project destination; configured default is used otherwise"),
-      model: z.string().optional().describe("Visible model label or auto"),
       reasoning: z
         .string()
         .optional()
@@ -414,7 +408,6 @@ register(
       attachments: args.attachments,
       profile: args.profile,
       projectUrl: args.project_url,
-      model: args.model,
       reasoning: args.reasoning,
       newChat: true,
       allowFallback: args.allow_fallback,
@@ -440,7 +433,7 @@ register(
   {
     title: "Ask ChatGPT",
     description:
-      "Pass a complete standalone user-authored prompt through the selected signed-in ChatGPT website account with minimal framing. ChatGPT receives this prompt plus the contents of exact explicitly listed attachments; it cannot see the Codex conversation, active project/repository, unlisted files, code, terminal, local UI, private state, or other agents. Each attachment is transmitted to the signed-in ChatGPT account and may be retained under that account/project's data settings, so include files only with the user's authorization and never include secrets. For a Codex-created general research or drafting workstream, prefer delegate_research_to_chatgpt. Never use this for a request that depends on unstated local context. If the prompt asks for a generated file, set expect_response_files=true so the authenticated browser downloads it and returns a local MCP resource. New-chat requests run concurrently in separate tabs, while Send actions are globally paced five seconds apart by default. Pro jobs can normally take an hour or longer and may show small interim cards before their large final response. Use list_chatgpt_jobs and wait_for_chatgpt_response with the original job ID. queued, preparing, waiting_to_submit, generating, and collecting_files mean the job is active; do not create a duplicate or treat a bounded status wait as a failure. Upload failures are not retried automatically.",
+      "Pass a complete standalone user-authored prompt through the selected signed-in ChatGPT website account with minimal framing. The bridge preserves ChatGPT's current/default model and exposes only thinking effort. ChatGPT receives this prompt plus the contents of exact explicitly listed attachments; it cannot see the Codex conversation, active project/repository, unlisted files, code, terminal, local UI, private state, or other agents. Each attachment is transmitted to the signed-in ChatGPT account and may be retained under that account/project's data settings, so include files only with the user's authorization and never include secrets. For a Codex-created general research or drafting workstream, prefer delegate_research_to_chatgpt. Never use this for a request that depends on unstated local context. If the prompt asks for a generated file, set expect_response_files=true so the authenticated browser downloads it and returns a local MCP resource. New-chat requests run concurrently in separate tabs, while Send actions are globally paced five seconds apart by default. Pro jobs can normally take an hour or longer and may show small interim cards before their large final response. Use list_chatgpt_jobs and wait_for_chatgpt_response with the original job ID. queued, preparing, waiting_to_submit, generating, and collecting_files mean the job is active; do not create a duplicate or treat a bounded status wait as a failure. Upload failures are not retried automatically.",
     inputSchema: {
       prompt: z
         .string()
@@ -457,7 +450,6 @@ register(
         .string()
         .optional()
         .describe("Optional ChatGPT project destination; configured default is used otherwise"),
-      model: z.string().optional().describe("Visible model label or auto"),
       reasoning: z
         .string()
         .optional()
@@ -491,7 +483,6 @@ register(
       attachments: args.attachments,
       profile: args.profile,
       projectUrl: args.project_url,
-      model: args.model,
       reasoning: args.reasoning,
       newChat: args.new_chat,
       allowFallback: args.allow_fallback,

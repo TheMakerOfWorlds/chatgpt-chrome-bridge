@@ -327,6 +327,14 @@ async function visiblePopupOptions(page, kind) {
         if (!label || seen.has(normalized)) continue;
         if (/log out|settings|delete|archive|share/.test(normalized)) continue;
         if (
+          element.getAttribute("aria-haspopup") === "menu" ||
+          /^(?:power|advanced)(?:\s|$)|^show (?:advanced|compact) options|^(?:model|effort)(?:\s|$)/.test(
+            normalized,
+          )
+        ) {
+          continue;
+        }
+        if (
           pickerKind === "reasoning" &&
           !/reason|thinking|effort|fast|instant|\blow\b|\bmedium\b|standard|balanced|\bhigh\b|\bdeep\b|extended|\bmax(?:imum)?\b|\bpro\b/.test(
             normalized,
@@ -352,19 +360,141 @@ async function visiblePopupOptions(page, kind) {
   );
 }
 
+async function markVisiblePopupControl(page, kind) {
+  const token = `popup-control-${crypto.randomUUID()}`;
+  const found = await page.evaluate(
+    ({ targetKind, marker }) => {
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return (
+          rect.width > 4 &&
+          rect.height > 4 &&
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          Number(style.opacity || "1") > 0
+        );
+      };
+      const roots = Array.from(
+        document.querySelectorAll(
+          '[role="menu"], [role="listbox"], [role="dialog"], [data-radix-menu-content], [data-headlessui-state~="open"]',
+        ),
+      ).filter(visible);
+      for (const root of roots) {
+        const candidates = Array.from(
+          root.querySelectorAll(
+            '[role="menuitem"], [role="button"], button',
+          ),
+        ).filter(visible);
+        for (const element of candidates) {
+          const label = [
+            element.getAttribute("aria-label"),
+            element.innerText || element.textContent,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .trim()
+            .replace(/\s+/g, " ");
+          const normalized = label.toLowerCase();
+          const opensMenu = element.getAttribute("aria-haspopup") === "menu";
+          const matches =
+            targetKind === "advanced"
+              ? /\badvanced\b/.test(normalized) && !opensMenu
+              : opensMenu &&
+                (targetKind === "model"
+                  ? /(?:^|\s)model(?:\s|$)/.test(normalized)
+                  : /(?:^|\s)effort(?:\s|$)/.test(normalized));
+          if (!matches) continue;
+          element.setAttribute("data-chatgpt-chrome-popup-control", marker);
+          return {
+            expanded: element.getAttribute("aria-expanded"),
+            state: element.getAttribute("data-state"),
+            label,
+          };
+        }
+      }
+      return null;
+    },
+    { targetKind: kind, marker: token },
+  );
+  if (!found) return null;
+  return {
+    ...found,
+    locator: page.locator(
+      `[data-chatgpt-chrome-popup-control="${token}"]`,
+    ),
+  };
+}
+
+async function openAdvancedPickerPath(page, kind) {
+  const advanced = await markVisiblePopupControl(page, "advanced");
+  let expandedAdvanced = false;
+  if (advanced) {
+    const collapsed =
+      advanced.expanded === "false" ||
+      /show advanced options/i.test(advanced.label);
+    if (collapsed) {
+      await advanced.locator.click({ timeout: 5_000 });
+      await page.waitForTimeout(180);
+      expandedAdvanced = true;
+    }
+  }
+
+  let submenu = await markVisiblePopupControl(page, kind);
+  if (
+    !submenu &&
+    advanced &&
+    !expandedAdvanced &&
+    advanced.expanded !== "true" &&
+    !/show compact options/i.test(advanced.label)
+  ) {
+    await advanced.locator.click({ timeout: 5_000 });
+    await page.waitForTimeout(180);
+    submenu = await markVisiblePopupControl(page, kind);
+  }
+  if (!submenu) return false;
+  if (submenu.expanded !== "true" && submenu.state !== "open") {
+    await submenu.locator.click({ timeout: 5_000 });
+    await page.waitForTimeout(220);
+  }
+  return true;
+}
+
 async function openPicker(page, kind, cachedSignature = null) {
   const trigger = await findPickerTrigger(page, kind, cachedSignature);
   if (!trigger) return { trigger: null, signature: null, options: [] };
   const signature = await signatureFor(trigger.locator);
   await trigger.locator.click({ timeout: 5_000 });
   await page.waitForTimeout(220);
+  await openAdvancedPickerPath(page, kind);
   const options = await visiblePopupOptions(page, kind);
   return { trigger, signature, options };
 }
 
 async function closePicker(page) {
-  await page.keyboard.press("Escape").catch(() => {});
-  await page.waitForTimeout(80);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const openMenus = await page.evaluate(() => {
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return (
+          rect.width > 4 &&
+          rect.height > 4 &&
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          Number(style.opacity || "1") > 0
+        );
+      };
+      return Array.from(
+        document.querySelectorAll('[role="menu"], [role="listbox"]'),
+      ).filter(visible).length;
+    });
+    if (!openMenus) break;
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(80);
+  }
 }
 
 function uniqueOptions(options) {
@@ -380,10 +510,16 @@ function uniqueOptions(options) {
 const REASONING_WORDS =
   /reason|thinking|effort|fast|instant|\blow\b|\bmedium\b|standard|balanced|\bhigh\b|\bdeep\b|extended|\bmax(?:imum)?\b|\bpro\b/i;
 
-export async function discoverAvailableOptions(page, cache = {}) {
-  const model = await openPicker(page, "model", cache.modelTrigger);
+export async function discoverAvailableOptions(
+  page,
+  cache = {},
+  { includeModels = true } = {},
+) {
+  const model = includeModels
+    ? await openPicker(page, "model", cache.modelTrigger)
+    : { signature: null, options: [] };
   const modelOptions = uniqueOptions(model.options);
-  await closePicker(page);
+  if (includeModels) await closePicker(page);
 
   const reasoning = await openPicker(
     page,
@@ -400,7 +536,7 @@ export async function discoverAvailableOptions(page, cache = {}) {
     modelOptions: modelOptions.map((option) => option.label),
     reasoningOptions: reasoningOptions.map((option) => option.label),
     signatures: {
-      modelTrigger: model.signature,
+      modelTrigger: includeModels ? model.signature : null,
       reasoningTrigger: reasoning.signature,
     },
   };
@@ -474,6 +610,7 @@ export async function selectPreference(
   );
   await locator.click({ timeout: 5_000 });
   await page.waitForTimeout(250);
+  await closePicker(page);
   return {
     requested: preference,
     selected: choice.option.label,
