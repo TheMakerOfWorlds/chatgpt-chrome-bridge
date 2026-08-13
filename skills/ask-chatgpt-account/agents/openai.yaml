@@ -1,11 +1,11 @@
 interface:
   display_name: "ChatGPT Parallel Worker"
-  short_description: "Deep reasoning with safe repository bundles"
-  default_prompt: "Use $ask-chatgpt-account for standalone deep reasoning, research, explicit files, or a reviewed sanitized repository bundle; use Grok for natural writing, preserve long-running Pro job IDs, and retrieve generated files as local resources."
+  short_description: "Deep ChatGPT reasoning and threaded follow-ups"
+  default_prompt: "Use $ask-chatgpt-account for standalone deep reasoning, safe explicit attachments, generated files, or a follow-up in a completed ChatGPT conversation; preserve each new reply job ID."
 dependencies:
   tools:
     - type: "mcp"
       value: "chatgpt-chrome-bridge"
-      description: "Context-isolated ChatGPT worker with focus-safe background launch, idle auto-close, local repository bundling, generated-file retrieval, durable Pro status, and browser inspection"
+      description: "Context-isolated ChatGPT worker with exact-thread replies, focus-safe background launch, bounded local retention, generated-file retrieval, durable Pro status, and browser inspection"
 policy:
   allow_implicit_invocation: true

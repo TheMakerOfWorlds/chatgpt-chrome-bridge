@@ -1732,6 +1732,133 @@ export async function inspectConversationState(page) {
   };
 }
 
+async function lastAuthoredConversationTurn(page) {
+  return page.evaluate(() => {
+    const visible = (element) => {
+      if (!element || typeof element.getBoundingClientRect !== "function") {
+        return false;
+      }
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return (
+        rect.width > 2 &&
+        rect.height > 2 &&
+        style.visibility !== "hidden" &&
+        style.display !== "none"
+      );
+    };
+    const conversationRoot = document.querySelector("main") || document;
+    const authored = Array.from(
+      conversationRoot.querySelectorAll(
+        '[data-message-author-role="user"], [data-message-author-role="assistant"], article[data-turn="user"], article[data-turn="assistant"]',
+      ),
+    ).filter(visible);
+    const turns = [];
+    const seen = new Set();
+    for (const element of authored) {
+      const turn =
+        element.closest(
+          '[data-testid^="conversation-turn-"], article[data-turn], section[data-turn]',
+        ) || element;
+      if (seen.has(turn)) continue;
+      seen.add(turn);
+      const role =
+        element.getAttribute("data-message-author-role") ||
+        turn.getAttribute("data-turn") ||
+        null;
+      if (!/^(?:user|assistant)$/.test(role || "")) continue;
+      turns.push({
+        role,
+        text: (turn.innerText || turn.textContent || "")
+          .trim()
+          .replace(/\s+/g, " ")
+          .slice(0, 1_000),
+      });
+    }
+    return turns.at(-1) || null;
+  });
+}
+
+export async function conversationReplyState(page) {
+  const [messages, active, lastTurn, composer] = await Promise.all([
+    assistantMessages(page),
+    activeResponseState(page),
+    lastAuthoredConversationTurn(page),
+    findComposer(page),
+  ]);
+  const latestAssistant = messages.at(-1) || null;
+  const looksInterim = looksLikeProInterim(latestAssistant?.text || "");
+  let reason = null;
+  if (!composer) reason = "composer-not-found";
+  else if (!latestAssistant) reason = "assistant-response-not-hydrated";
+  else if (active.active) reason = "response-active";
+  else if (looksInterim) reason = "latest-response-interim";
+  else if (!latestAssistant.terminal) reason = "latest-response-not-terminal";
+  else if (lastTurn?.role !== "assistant") reason = "latest-turn-not-assistant";
+  return {
+    ready: reason === null,
+    reason,
+    active,
+    composerFound: Boolean(composer),
+    assistantMessageCount: messages.length,
+    latestAssistant: latestAssistant
+      ? {
+          text: latestAssistant.text.slice(0, 2_000),
+          terminal: latestAssistant.terminal,
+          completionSignal: latestAssistant.signal,
+          looksInterim,
+        }
+      : null,
+    lastTurn,
+  };
+}
+
+export async function waitForConversationReplyReadiness(
+  page,
+  { timeoutMs = 20_000, quietMs = 1_000 } = {},
+) {
+  const startedAt = Date.now();
+  let lastSignature = null;
+  let lastChangedAt = startedAt;
+  let state = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    state = await conversationReplyState(page);
+    const signature = JSON.stringify({
+      reason: state.reason,
+      active: state.active,
+      assistantMessageCount: state.assistantMessageCount,
+      latestAssistant: state.latestAssistant,
+      lastTurn: state.lastTurn,
+    });
+    if (signature !== lastSignature) {
+      lastSignature = signature;
+      lastChangedAt = Date.now();
+    }
+    const stableForMs = Date.now() - lastChangedAt;
+    if (state.ready && stableForMs >= quietMs) {
+      return {
+        ...state,
+        stableForMs,
+        elapsedMs: Date.now() - startedAt,
+      };
+    }
+    await page.waitForTimeout(250);
+  }
+  return {
+    ...(state || {
+      ready: false,
+      reason: "conversation-not-ready",
+      active: { active: false, signal: null },
+      composerFound: false,
+      assistantMessageCount: 0,
+      latestAssistant: null,
+      lastTurn: null,
+    }),
+    stableForMs: Date.now() - lastChangedAt,
+    elapsedMs: Date.now() - startedAt,
+  };
+}
+
 export async function waitForConversationHydration(
   page,
   { timeoutMs = 15_000 } = {},

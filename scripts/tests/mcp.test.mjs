@@ -60,6 +60,7 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
     "prepare_repository_bundle",
     "delegate_research_to_chatgpt",
     "ask_chatgpt",
+    "reply_to_chatgpt_conversation",
     "collect_chatgpt_response_files",
     "inspect_chatgpt_conversation",
     "list_chatgpt_jobs",
@@ -113,11 +114,28 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
   );
   assert.equal(directAsk.inputSchema.properties.attachments.maxItems, 10);
   assert.equal(directAsk.inputSchema.properties.model, undefined);
+  assert.equal(directAsk.inputSchema.properties.new_chat, undefined);
   assert.ok(directAsk.inputSchema.properties.reasoning);
   assert.equal(
     directAsk.inputSchema.properties.download_response_files.default,
     true,
   );
+  const reply = listed.tools.find(
+    (tool) => tool.name === "reply_to_chatgpt_conversation",
+  );
+  assert.match(reply.description, /new bridge job ID/);
+  assert.match(reply.description, /inherits only the prior ChatGPT website conversation/);
+  assert.match(reply.description, /shared cross-process lock/);
+  assert.ok(reply.inputSchema.properties.job_id);
+  assert.ok(reply.inputSchema.properties.conversation_url);
+  assert.ok(reply.inputSchema.properties.prompt);
+  assert.equal(reply.inputSchema.properties.attachments.maxItems, 10);
+  assert.equal(reply.inputSchema.properties.model, undefined);
+  assert.equal(reply.inputSchema.properties.project_url, undefined);
+  assert.equal(reply.inputSchema.properties.new_chat, undefined);
+  assert.ok(reply.inputSchema.properties.reasoning);
+  assert.equal(reply.inputSchema.properties.wait.default, true);
+  assert.equal(reply.inputSchema.properties.download_response_files.default, true);
   const repositoryBundle = listed.tools.find(
     (tool) => tool.name === "prepare_repository_bundle",
   );
@@ -185,6 +203,21 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
   });
   assert.equal(invalidInspection.isError, true);
   assert.match(invalidInspection.structuredContent.error, /job_id or conversation_url/);
+  const invalidReplyTarget = await client.callTool({
+    name: "reply_to_chatgpt_conversation",
+    arguments: { prompt: "Follow up" },
+  });
+  assert.equal(invalidReplyTarget.isError, true);
+  assert.match(invalidReplyTarget.structuredContent.error, /exactly one/);
+  const invalidReplyUrl = await client.callTool({
+    name: "reply_to_chatgpt_conversation",
+    arguments: {
+      conversation_url: "https://example.com/c/not-chatgpt",
+      prompt: "Follow up",
+    },
+  });
+  assert.equal(invalidReplyUrl.isError, true);
+  assert.match(invalidReplyUrl.structuredContent.error, /ChatGPT conversation URL/);
   const invalidBundle = await client.callTool({
     name: "prepare_repository_bundle",
     arguments: { repository_root: "/" },

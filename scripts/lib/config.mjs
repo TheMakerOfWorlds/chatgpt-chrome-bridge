@@ -27,6 +27,7 @@ export function bridgePaths(env = process.env) {
     cacheFile: path.join(stateRoot, "ui-cache.json"),
     submissionPacerFile: path.join(stateRoot, "submission-pacer.json"),
     submissionPacerLock: path.join(stateRoot, "submission-pacer.lock"),
+    conversationLocksRoot: path.join(stateRoot, "conversation-locks"),
     profilesRoot: path.join(stateRoot, "profiles"),
     chromeUserData,
     localStateFile: path.join(chromeUserData, "Local State"),
@@ -69,6 +70,41 @@ export function normalizeProjectUrl(value) {
   parsed.hash = "";
   parsed.pathname = parsed.pathname.replace(/\/$/, "");
   return parsed.toString();
+}
+
+export function normalizeConversationUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) throw new Error("A ChatGPT conversation URL is required.");
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`Invalid ChatGPT conversation URL: ${raw}`);
+  }
+  const isConversationPath =
+    /^\/c\/[a-z0-9_-]+\/?$/i.test(parsed.pathname) ||
+    /^\/g\/[a-z0-9_-]+\/c\/[a-z0-9_-]+\/?$/i.test(parsed.pathname);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.hostname !== "chatgpt.com" ||
+    !isConversationPath
+  ) {
+    throw new Error(
+      "A ChatGPT conversation URL must look like " +
+        "https://chatgpt.com/c/… or https://chatgpt.com/g/…/c/….",
+    );
+  }
+  parsed.search = "";
+  parsed.hash = "";
+  parsed.pathname = parsed.pathname.replace(/\/$/, "");
+  return parsed.toString();
+}
+
+export function conversationKeyFromUrl(value) {
+  const parsed = new URL(normalizeConversationUrl(value));
+  const match = parsed.pathname.match(/\/c\/([a-z0-9_-]+)$/i);
+  if (!match) throw new Error(`Could not identify ChatGPT conversation: ${value}`);
+  return match[1].toLowerCase();
 }
 
 export async function readJson(file, fallback = null) {

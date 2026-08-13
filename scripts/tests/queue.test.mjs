@@ -23,14 +23,15 @@ test("runs multiple ChatGPT jobs concurrently up to the configured limit", async
   const third = queue.create({ label: "three" });
 
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(queue.summary(), {
-    maxConcurrent: 2,
-    running: 2,
-    queued: 1,
-    completed: 0,
-    failed: 0,
-    phases: { preparing: 2, queued: 1 },
-  });
+  const summary = queue.summary();
+  assert.equal(summary.maxConcurrent, 2);
+  assert.equal(summary.running, 2);
+  assert.equal(summary.queued, 1);
+  assert.equal(summary.completed, 0);
+  assert.equal(summary.failed, 0);
+  assert.deepEqual(summary.phases, { preparing: 2, queued: 1 });
+  assert.equal(summary.retention.terminalHours, 24);
+  assert.equal(summary.retention.maxTerminalJobs, 200);
   releases.shift()();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(queue.summary().running, 2);
@@ -198,6 +199,179 @@ test("retains terminal job records for 24 hours", () => {
 
   assert.equal(queue.jobs.has("recent"), true);
   assert.equal(queue.jobs.has("expired"), false);
+});
+
+test("creates chained reply jobs with exact conversation lineage", async () => {
+  const asks = [];
+  const conversationUrl =
+    "https://chatgpt.com/g/g-p-project/c/6a5eac19-a42c-83ea-a20a-c7abf06dc278";
+  const bridge = {
+    config: { maxConcurrent: 2 },
+    async ask(params) {
+      asks.push(params);
+      params.onPhase("generating", { conversationUrl });
+      return {
+        response: `response-${asks.length}`,
+        conversationUrl,
+        profile: { directory: "Profile 1" },
+      };
+    },
+    async closeBrowserIfIdle() {},
+    getConversationRecord() {
+      return null;
+    },
+  };
+  const queue = new AskJobQueue(bridge);
+  const initial = queue.create({ prompt: "Initial question", newChat: true });
+  const initialResult = await queue.wait(initial.id, 2);
+  assert.equal(initialResult.status, "completed");
+  assert.equal(initialResult.continuation, false);
+  assert.equal(initialResult.rootJobId, initial.id);
+  assert.equal(initialResult.replyDepth, 0);
+
+  const reply = queue.createReply({
+    sourceJobId: initial.id,
+    prompt: "Add this new information.",
+  });
+  assert.notEqual(reply.id, initial.id);
+  assert.equal(reply.continuation, true);
+  assert.equal(reply.parentJobId, initial.id);
+  assert.equal(reply.rootJobId, initial.id);
+  assert.equal(reply.replyDepth, 1);
+  assert.equal(reply.conversationUrl, conversationUrl);
+  const replyResult = await queue.wait(reply.id, 2);
+  assert.equal(replyResult.status, "completed");
+  assert.equal(asks[1].conversationUrl, conversationUrl);
+  assert.equal(asks[1].newChat, false);
+  assert.equal(asks[1].parentJobId, initial.id);
+
+  const secondReply = queue.createReply({
+    sourceJobId: reply.id,
+    prompt: "One more follow-up.",
+  });
+  assert.equal(secondReply.parentJobId, reply.id);
+  assert.equal(secondReply.rootJobId, initial.id);
+  assert.equal(secondReply.replyDepth, 2);
+  await queue.wait(secondReply.id, 2);
+});
+
+test("rejects replies to nonterminal or failed jobs", () => {
+  const queue = new AskJobQueue({ config: { maxConcurrent: 1 } });
+  queue.jobs.set("running-source", {
+    id: "running-source",
+    status: "running",
+    phase: "generating",
+  });
+  queue.jobs.set("failed-source", {
+    id: "failed-source",
+    status: "failed",
+    phase: "failed",
+    completedAt: new Date().toISOString(),
+  });
+  assert.throws(
+    () =>
+      queue.createReply({
+        sourceJobId: "running-source",
+        prompt: "Too early",
+      }),
+    /Only a completed job can be continued/,
+  );
+  assert.throws(
+    () =>
+      queue.createReply({
+        sourceJobId: "failed-source",
+        prompt: "Uncertain website state",
+      }),
+    /Only a completed job can be continued/,
+  );
+});
+
+test("serializes same-conversation replies while running other conversations", async () => {
+  const activeByConversation = new Map();
+  const peakByConversation = new Map();
+  const releases = new Map();
+  const bridge = {
+    config: { maxConcurrent: 3 },
+    async ask({ prompt, conversationUrl }) {
+      const active = (activeByConversation.get(conversationUrl) || 0) + 1;
+      activeByConversation.set(conversationUrl, active);
+      peakByConversation.set(
+        conversationUrl,
+        Math.max(peakByConversation.get(conversationUrl) || 0, active),
+      );
+      await new Promise((resolve) => releases.set(prompt, resolve));
+      activeByConversation.set(conversationUrl, active - 1);
+      return { response: prompt, conversationUrl };
+    },
+    async closeBrowserIfIdle() {},
+    getConversationRecord() {
+      return null;
+    },
+  };
+  const queue = new AskJobQueue(bridge);
+  const sameUrl = "https://chatgpt.com/c/same-conversation";
+  const otherUrl = "https://chatgpt.com/c/other-conversation";
+  const first = queue.createReply({ conversationUrl: sameUrl, prompt: "first" });
+  const second = queue.createReply({ conversationUrl: sameUrl, prompt: "second" });
+  const other = queue.createReply({ conversationUrl: otherUrl, prompt: "other" });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(queue.summary().running, 2);
+  assert.equal(queue.summary().queued, 1);
+  assert.equal(releases.has("first"), true);
+  assert.equal(releases.has("other"), true);
+  assert.equal(releases.has("second"), false);
+
+  releases.get("first")();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(releases.has("second"), true);
+  releases.get("second")();
+  releases.get("other")();
+  await Promise.all([
+    queue.wait(first.id, 2),
+    queue.wait(second.id, 2),
+    queue.wait(other.id, 2),
+  ]);
+  assert.equal(peakByConversation.get(sameUrl), 1);
+});
+
+test("caps terminal records, preserves active lineage, and forgets paired conversations", () => {
+  const forgotten = [];
+  const bridge = {
+    config: { maxConcurrent: 1 },
+    forgetConversation(id) {
+      forgotten.push(id);
+    },
+  };
+  const queue = new AskJobQueue(bridge);
+  const now = Date.now();
+  for (let index = 0; index < 4; index += 1) {
+    const id = `terminal-${index}`;
+    queue.jobs.set(id, {
+      id,
+      status: "completed",
+      completedAt: new Date(now - index * 1_000).toISOString(),
+      createdAt: new Date(now - index * 1_000).toISOString(),
+    });
+  }
+  queue.jobs.set("active-reply", {
+    id: "active-reply",
+    status: "running",
+    parentJobId: "terminal-3",
+    rootJobId: "terminal-3",
+  });
+
+  const retention = queue.prune({
+    now,
+    maxAgeMs: 60_000,
+    maxTerminalJobs: 1,
+  });
+  assert.equal(queue.jobs.has("terminal-0"), true);
+  assert.equal(queue.jobs.has("terminal-3"), true, "active ancestor is protected");
+  assert.equal(queue.jobs.has("terminal-1"), false);
+  assert.equal(queue.jobs.has("terminal-2"), false);
+  assert.deepEqual(new Set(forgotten), new Set(["terminal-1", "terminal-2"]));
+  assert.equal(retention.removedJobIds.length, 2);
 });
 
 test("closes the browser to persist session state when the queue becomes idle", async () => {

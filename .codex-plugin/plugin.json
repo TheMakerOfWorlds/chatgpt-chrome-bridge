@@ -1,7 +1,7 @@
 {
   "name": "chatgpt-chrome-bridge",
-  "version": "0.1.0+codex.20260807201236",
-  "description": "Give Codex context-isolated ChatGPT reasoning and Grok natural-writing workers through exact signed-in Chrome profiles.",
+  "version": "0.1.0+codex.20260813031424",
+  "description": "Give Codex context-isolated ChatGPT reasoning with exact-thread follow-ups and Grok natural-writing workers through signed-in Chrome profiles.",
   "author": {
     "name": "Jackson Stone"
   },
@@ -16,8 +16,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "ChatGPT + Grok Bridge",
-    "shortDescription": "ChatGPT reasoning plus Grok natural writing.",
-    "longDescription": "Gives Codex two parallel, context-isolated account-backed workers: ChatGPT for deep reasoning, research, analysis, synthesis, critique, generic planning, safe repository snapshots, and generated artifacts; and Grok for natural prose, rewriting, voice, tone, correspondence, scripts, product copy, and other standalone writing. Codex may choose either worker implicitly when it is a good fit. Both receive only the submitted prompt plus exact user-authorized attachments and cannot see the Codex conversation, project, repository, unlisted files, terminal, local UI, or other agents. The workers bind to configured Chrome profile directories instead of whichever profile is focused, dynamically discover current account options, launch isolated Chrome off-screen without stealing focus, globally pace actual submissions, support concurrent queues with durable job IDs and status calls, provide browser inspection as a recovery fail-safe, and close idle worker browsers after preserving verified refreshed login state. ChatGPT leaves its current/default model unchanged and exposes only thinking effort, expanding the Advanced menu when needed. Grok additionally exposes shared per-machine availability so every Codex task can skip it after a recorded logout and perform only one verification for stale or unknown state. ChatGPT creates reviewed secret-scanned repository ZIPs and retrieves generated response files. Grok defaults to Fast and files chats in the configured Grok project; ChatGPT defaults to Extra High reasoning and its configured Agents project.",
+    "shortDescription": "ChatGPT reasoning, follow-ups, and Grok writing.",
+    "longDescription": "Gives Codex two parallel, context-isolated account-backed workers: ChatGPT for deep reasoning, research, analysis, synthesis, critique, generic planning, safe repository snapshots, generated artifacts, and exact-thread follow-up conversations; and Grok for natural prose, rewriting, voice, tone, correspondence, scripts, product copy, and other standalone writing. Codex may choose either worker implicitly when it is a good fit. Both receive only the submitted prompt plus exact user-authorized attachments and cannot see the Codex conversation, project, repository, unlisted files, terminal, local UI, or other agents. A ChatGPT follow-up additionally receives that selected website conversation's own history and returns a fresh job ID with reply lineage. The workers bind to configured Chrome profile directories instead of whichever profile is focused, dynamically discover current account options, launch isolated Chrome off-screen without stealing focus, globally pace actual submissions, support concurrent queues with durable status calls, provide browser inspection as a recovery fail-safe, and close idle worker browsers after preserving verified refreshed login state. Same-ChatGPT-thread replies are serialized locally and through a heartbeat-backed shared lease while unrelated work remains parallel. Terminal local metadata and internal inspection screenshots are automatically age/count bounded without deleting account chats or downloaded deliverables. ChatGPT leaves its current/default model unchanged and exposes only thinking effort, expanding the Advanced menu when needed. Grok additionally exposes shared per-machine availability so every Codex task can skip it after a recorded logout and perform only one verification for stale or unknown state. ChatGPT creates reviewed secret-scanned repository ZIPs and retrieves generated response files. Grok defaults to Fast and files chats in the configured Grok project; ChatGPT defaults to Extra High reasoning and its configured Agents project.",
     "developerName": "Jackson Stone",
     "category": "Productivity",
     "capabilities": [
@@ -27,13 +27,8 @@
     ],
     "defaultPrompt": [
       "Delegate a self-contained general research workstream to ChatGPT",
-      "Use Grok to write or rewrite natural-sounding prose",
-      "Route reasoning to ChatGPT and writing to Grok",
-      "Get a second opinion from my ChatGPT account",
-      "Analyze exact files I explicitly attach to ChatGPT",
-      "Prepare a reviewed sanitized repository ZIP for an authorized ChatGPT attachment",
-      "Have ChatGPT generate a file and retrieve it locally",
-      "Sync ChatGPT effort and Grok model options"
+      "Continue a completed ChatGPT answer with a follow-up",
+      "Use Grok to write or rewrite natural-sounding prose"
     ],
     "brandColor": "#111111"
   },

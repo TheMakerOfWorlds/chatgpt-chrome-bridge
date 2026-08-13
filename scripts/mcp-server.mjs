@@ -433,7 +433,7 @@ register(
   {
     title: "Ask ChatGPT",
     description:
-      "Pass a complete standalone user-authored prompt through the selected signed-in ChatGPT website account with minimal framing. The bridge preserves ChatGPT's current/default model and exposes only thinking effort. ChatGPT receives this prompt plus the contents of exact explicitly listed attachments; it cannot see the Codex conversation, active project/repository, unlisted files, code, terminal, local UI, private state, or other agents. Each attachment is transmitted to the signed-in ChatGPT account and may be retained under that account/project's data settings, so include files only with the user's authorization and never include secrets. For a Codex-created general research or drafting workstream, prefer delegate_research_to_chatgpt. Never use this for a request that depends on unstated local context. If the prompt asks for a generated file, set expect_response_files=true so the authenticated browser downloads it and returns a local MCP resource. New-chat requests run concurrently in separate tabs, while Send actions are globally paced five seconds apart by default. Pro jobs can normally take an hour or longer and may show small interim cards before their large final response. Use list_chatgpt_jobs and wait_for_chatgpt_response with the original job ID. queued, preparing, waiting_to_submit, generating, and collecting_files mean the job is active; do not create a duplicate or treat a bounded status wait as a failure. Upload failures are not retried automatically.",
+      "Pass a complete standalone user-authored prompt into a new conversation through the selected signed-in ChatGPT website account with minimal framing. Use reply_to_chatgpt_conversation—not an arbitrary reused browser page—to continue an existing chat. The bridge preserves ChatGPT's current/default model and exposes only thinking effort. ChatGPT receives this prompt plus the contents of exact explicitly listed attachments; it cannot see the Codex conversation, active project/repository, unlisted files, code, terminal, local UI, private state, or other agents. Each attachment is transmitted to the signed-in ChatGPT account and may be retained under that account/project's data settings, so include files only with the user's authorization and never include secrets. For a Codex-created general research or drafting workstream, prefer delegate_research_to_chatgpt. Never use this for a request that depends on unstated local context. If the prompt asks for a generated file, set expect_response_files=true so the authenticated browser downloads it and returns a local MCP resource. New-chat requests run concurrently in separate tabs, while Send actions are globally paced five seconds apart by default. Pro jobs can normally take an hour or longer and may show small interim cards before their large final response. Use list_chatgpt_jobs and wait_for_chatgpt_response with the original job ID. queued, preparing, waiting_to_submit, generating, and collecting_files mean the job is active; do not create a duplicate or treat a bounded status wait as a failure. Upload failures are not retried automatically.",
     inputSchema: {
       prompt: z
         .string()
@@ -454,7 +454,6 @@ register(
         .string()
         .optional()
         .describe("Visible label or alias: fast, low, medium, high, xhigh, max, pro, or auto"),
-      new_chat: z.boolean().default(true),
       allow_fallback: z
         .boolean()
         .default(false)
@@ -484,7 +483,96 @@ register(
       profile: args.profile,
       projectUrl: args.project_url,
       reasoning: args.reasoning,
-      newChat: args.new_chat,
+      newChat: true,
+      allowFallback: args.allow_fallback,
+      timeoutSeconds: args.timeout_seconds,
+      downloadResponseFiles: args.download_response_files,
+      expectResponseFiles: args.expect_response_files,
+      responseFileOutputDirectory: args.response_file_output_directory,
+    });
+    if (!args.wait) return job;
+    const waited = await jobs.wait(
+      job.id,
+      (args.timeout_seconds ||
+        bridge.config.timeoutSeconds ||
+        DEFAULT_CONFIG.timeoutSeconds) + 5,
+    );
+    if (waited.status === "failed") throw new Error(waited.error);
+    return waited;
+  },
+);
+
+register(
+  "reply_to_chatgpt_conversation",
+  {
+    title: "Reply to ChatGPT Conversation",
+    description:
+      "Continue one exact completed ChatGPT conversation and return the next assistant response under a new bridge job ID. Supply either the completed job_id from this Codex worker or the exact conversation_url returned by an earlier job, never both. A job ID preserves local parent/root/depth lineage; a URL is the durable recovery handle after another Codex task, a worker restart, or local-record pruning. The reply inherits only the prior ChatGPT website conversation—not any new Codex messages, project files, terminal state, or other-agent work—so put every new fact in prompt or in exact user-authorized attachments. The bridge reopens the exact conversation, waits for full final-turn readiness, refuses to submit while ChatGPT is still generating or showing an interim Pro update, preserves the current/default model, applies the selected thinking effort, and reuses the attachment, global five-second Send pacing, hour-plus Pro completion, generated-file, inspection, and idle-browser behavior. Same-conversation replies are serialized locally and through a shared cross-process lock while unrelated conversations can run concurrently. Use the new reply job ID for status and further replies; never poll or resubmit the parent as though it represented this follow-up.",
+    inputSchema: {
+      job_id: z
+        .string()
+        .uuid()
+        .optional()
+        .describe(
+          "Completed ChatGPT job in this Codex worker. The bridge resolves its exact conversation URL and records reply lineage.",
+        ),
+      conversation_url: z
+        .string()
+        .url()
+        .optional()
+        .describe(
+          "Exact https://chatgpt.com/c/… or https://chatgpt.com/g/…/c/… URL. Use when the original job belongs to another worker/task or its local record was pruned.",
+        ),
+      prompt: z
+        .string()
+        .min(1)
+        .describe(
+          "Complete follow-up message. It may rely on the selected ChatGPT conversation history, but must explicitly include all new Codex/task/local facts ChatGPT needs.",
+        ),
+      attachments: attachmentPathsSchema,
+      download_response_files: downloadResponseFilesSchema,
+      expect_response_files: expectResponseFilesSchema,
+      response_file_output_directory: responseFileOutputDirectorySchema,
+      profile: z.string().min(1).optional().describe("Chrome profile name or directory"),
+      reasoning: z
+        .string()
+        .optional()
+        .describe("Visible effort label or alias: fast, low, medium, high, xhigh, max, pro, or auto"),
+      allow_fallback: z
+        .boolean()
+        .default(false)
+        .describe("Allow a requested unavailable effort to fall back to a discovered option"),
+      wait: z.boolean().default(true),
+      timeout_seconds: z
+        .number()
+        .int()
+        .min(10)
+        .max(MAX_JOB_TIMEOUT_SECONDS)
+        .optional()
+        .describe(
+          "Response deadline for this follow-up job, in seconds (default 7200; maximum 14400). Waiting for another reply to the same conversation and hour-plus Pro processing are healthy states, not reasons to duplicate it.",
+        ),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
+  },
+  async (args) => {
+    if (Boolean(args.job_id) === Boolean(args.conversation_url)) {
+      throw new Error(
+        "Supply exactly one of job_id or conversation_url to reply to a ChatGPT conversation.",
+      );
+    }
+    const job = jobs.createReply({
+      sourceJobId: args.job_id,
+      conversationUrl: args.conversation_url,
+      jobLabel: args.prompt,
+      prompt: args.prompt,
+      attachments: args.attachments,
+      profile: args.profile,
+      reasoning: args.reasoning,
       allowFallback: args.allow_fallback,
       timeoutSeconds: args.timeout_seconds,
       downloadResponseFiles: args.download_response_files,
@@ -508,7 +596,7 @@ register(
   {
     title: "Collect ChatGPT Response Files",
     description:
-      "Reopen or re-scan one existing ChatGPT conversation and download files generated in its final response through the same authenticated browser session. Use the original job_id whenever possible; conversation_url is the recovery path when only the URL is known. This never resubmits the prompt. Do not collect from queued, preparing, waiting_to_submit, generating, or collecting_files jobs because Pro may still be emitting interim progress. Downloaded files are collision-safe local files with size, MIME, SHA-256, manifest, and MCP resource links for direct Codex access. If collection remains partial, failed, or none_found, use inspect_chatgpt_conversation on the same job or URL.",
+      "Reopen or re-scan one existing ChatGPT conversation and download files generated in its final response through the same authenticated browser session. Use the original job_id whenever possible; conversation_url is the recovery path when only the URL is known. This never resubmits the prompt. Do not collect from queued, waiting_for_conversation, preparing, waiting_to_submit, generating, or collecting_files jobs because Pro may still be emitting interim progress. Downloaded files are collision-safe local files with size, MIME, SHA-256, manifest, and MCP resource links for direct Codex access. If collection remains partial, failed, or none_found, use inspect_chatgpt_conversation on the same job or URL.",
     inputSchema: {
       job_id: z.string().uuid().optional(),
       conversation_url: z
@@ -652,7 +740,7 @@ register(
   {
     title: "List ChatGPT Jobs",
     description:
-      "Quickly inspect this Codex worker's ChatGPT jobs without blocking. Returns job IDs, short labels, queue positions, phases (queued, preparing, waiting_to_submit, generating, collecting_files, completed, or failed), conversation URLs, live progress snapshots, response-file metadata, timestamps, errors, result metadata without full response text, and the shared global submission pacer. Pro processing can normally take an hour or longer. queued, preparing, waiting_to_submit, generating, and collecting_files are healthy nonterminal phases, so keep the original job ID and do not resubmit. A progress preview is interim status, not the result. completed requires active signals to disappear, an explicit final-turn action, and a 15-second quiet window for Pro; stable partial text or a small interim card is never enough. Terminal job records remain available for 24 hours.",
+      "Quickly inspect this Codex worker's ChatGPT jobs without blocking. Returns job IDs, reply parent/root/depth lineage, short labels, queue positions, phases (queued, waiting_for_conversation, preparing, waiting_to_submit, generating, collecting_files, completed, or failed), conversation URLs, live progress snapshots, response-file metadata, timestamps, errors, result metadata without full response text, and the shared global submission pacer. Pro processing can normally take an hour or longer. queued, waiting_for_conversation, preparing, waiting_to_submit, generating, and collecting_files are healthy nonterminal phases, so keep the original job ID and do not resubmit. A progress preview is interim status, not the result. completed requires active signals to disappear, an explicit final-turn action, and a 15-second quiet window for Pro; stable partial text or a small interim card is never enough. Terminal local metadata is kept for at most 24 hours and capped at the 200 newest terminal jobs; use conversation_url as the durable cross-worker continuation/recovery handle. Automatic pruning never deletes ChatGPT account chats or downloaded response files.",
     inputSchema: {
       status: z
         .enum(["all", "queued", "running", "completed", "failed"])
@@ -679,7 +767,7 @@ register(
   {
     title: "Wait for ChatGPT Response",
     description:
-      "Wait for one previously queued ask_chatgpt or delegate_research_to_chatgpt job by ID. The default five-minute wait window is only a bounded status wait: it does not cancel or shorten the underlying job's two-hour default response deadline. If this returns queued, preparing, waiting_to_submit, generating, or collecting_files, the job is healthy and active; keep this same job ID and wait again instead of submitting a duplicate. Pro processing can normally take an hour or longer and may emit small interim cards. The bridge requires active progress to end, an explicit final-turn action, and a 15-second Pro quiet window before completion. Completed generated files include local MCP resource links. Use list_chatgpt_jobs for an immediate overview of many jobs.",
+      "Wait for one previously queued new-chat, delegated-research, or conversation-reply job by ID. The default five-minute wait window is only a bounded status wait: it does not cancel or shorten the underlying job's two-hour default response deadline. If this returns queued, waiting_for_conversation, preparing, waiting_to_submit, generating, or collecting_files, the job is healthy and active; keep this same job ID and wait again instead of submitting a duplicate. Pro processing can normally take an hour or longer and may emit small interim cards. The bridge requires active progress to end, an explicit final-turn action, and a 15-second Pro quiet window before completion. Completed generated files include local MCP resource links. Use list_chatgpt_jobs for an immediate overview of many jobs.",
     inputSchema: {
       job_id: z.string().uuid(),
       timeout_seconds: z
@@ -710,7 +798,7 @@ register(
   {
     title: "Get ChatGPT Bridge Status",
     description:
-      "Report bridge health, configuration, browser visibility/inspection state, idle-close lifecycle state, response-file roots, global submission-pacer timing, cached ChatGPT options, and an aggregate job/phase summary. Use list_chatgpt_jobs for individual job IDs, progress, files, and phases. Nonterminal jobs remain active even when Pro takes an hour or longer; do not submit duplicates.",
+      "Report bridge health, configuration, browser visibility/inspection state, idle-close lifecycle state, bounded local-retention policy/cleanup results, response-file roots, global submission-pacer timing, cached ChatGPT options, and an aggregate job/phase summary. Use list_chatgpt_jobs for individual job IDs, reply lineage, progress, files, and phases. Nonterminal jobs remain active even when Pro takes an hour or longer; do not submit duplicates.",
     inputSchema: {},
     annotations: {
       readOnlyHint: true,
@@ -718,11 +806,14 @@ register(
       openWorldHint: false,
     },
   },
-  async () => ({
-    ...(await bridge.status()),
-    jobs: jobs.summary(),
-    recentJobs: jobs.list({ limit: 20 }),
-  }),
+  async () => {
+    const jobSummary = jobs.summary();
+    return {
+      ...(await bridge.status()),
+      jobs: jobSummary,
+      recentJobs: jobs.list({ limit: 20 }),
+    };
+  },
 );
 
 register(

@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   ChromeProfileStore,
+  conversationKeyFromUrl,
   DEFAULT_JOB_TIMEOUT_SECONDS,
   DEFAULT_STATUS_WAIT_SECONDS,
   DEFAULT_SUBMISSION_INTERVAL_SECONDS,
@@ -14,6 +15,7 @@ import {
   MAX_CONCURRENT_JOBS,
   MAX_JOB_TIMEOUT_SECONDS,
   MAX_SUBMISSION_INTERVAL_SECONDS,
+  normalizeConversationUrl,
   normalizeProjectUrl,
   resolveChromeProfile,
   saveConfig,
@@ -31,6 +33,34 @@ test("accepts only canonical ChatGPT project destinations", () => {
     () => normalizeProjectUrl("https://example.com/g/g-p-123/project"),
     /ChatGPT project URL/,
   );
+});
+
+test("accepts only exact ChatGPT conversations and keys canonical URL variants together", () => {
+  const conversationId = "6a5eac19-a42c-83ea-a20a-c7abf06dc278";
+  assert.equal(
+    normalizeConversationUrl(
+      `https://chatgpt.com/g/g-p-project/c/${conversationId}/?temporary=yes#turn`,
+    ),
+    `https://chatgpt.com/g/g-p-project/c/${conversationId}`,
+  );
+  assert.equal(
+    conversationKeyFromUrl(`https://chatgpt.com/c/${conversationId}`),
+    conversationId,
+  );
+  assert.equal(
+    conversationKeyFromUrl(
+      `https://chatgpt.com/g/g-p-project/c/${conversationId}`,
+    ),
+    conversationId,
+  );
+  for (const invalid of [
+    "https://example.com/c/not-chatgpt",
+    "https://chatgpt.com/",
+    "https://chatgpt.com/g/g-p-project/project",
+    "https://auth.openai.com/authorize",
+  ]) {
+    assert.throws(() => normalizeConversationUrl(invalid), /conversation URL/);
+  }
 });
 
 test("defaults to 30 jobs, a two-hour deadline, and five-second pacing", async (t) => {

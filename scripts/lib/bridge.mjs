@@ -7,17 +7,20 @@ import { prepareAttachments } from "./attachments.mjs";
 import {
   bridgePaths,
   ChromeProfileStore,
+  conversationKeyFromUrl,
   DEFAULT_CONFIG,
   listChromeProfiles,
   loadConfig,
   MAX_CONCURRENT_JOBS,
   MAX_JOB_TIMEOUT_SECONDS,
+  normalizeConversationUrl,
   normalizeProjectUrl,
   readJson,
   resolveChromeProfile,
   saveConfig,
   writeJsonAtomic,
 } from "./config.mjs";
+import { GlobalConversationLock } from "./conversation-lock.mjs";
 import { launchNativeControlledChrome } from "./native-controller.mjs";
 import { launchNativeLogin } from "./native-login.mjs";
 import { GlobalSubmissionPacer } from "./submission-pacer.mjs";
@@ -34,10 +37,17 @@ import {
   waitForAuthenticationStatus,
   waitForAssistantResponse,
   waitForConversationHydration,
+  waitForConversationReplyReadiness,
 } from "./ui-adapter.mjs";
 
 export const DEFAULT_BROWSER_IDLE_CLOSE_MS = 1_500;
 export const INSPECTION_KEEP_OPEN_MS = 2 * 60 * 1000;
+export const TERMINAL_JOB_RETENTION_MS = 24 * 60 * 60 * 1000;
+export const MAX_RETAINED_TERMINAL_JOBS = 200;
+export const CONVERSATION_RECORD_RETENTION_MS = TERMINAL_JOB_RETENTION_MS;
+export const MAX_RETAINED_CONVERSATION_RECORDS = MAX_RETAINED_TERMINAL_JOBS;
+export const INSPECTION_ARTIFACT_RETENTION_MS = 24 * 60 * 60 * 1000;
+export const MAX_RETAINED_INSPECTION_ARTIFACTS = 200;
 
 async function waitForProcessExit(child, timeoutMs) {
   if (!child || child.exitCode !== null) return true;
@@ -74,6 +84,7 @@ export class ChatGptChromeBridge {
     this.profileStore = new ChromeProfileStore(paths);
     this.workerId = workerId;
     this.submissionPacer = new GlobalSubmissionPacer({ paths, workerId });
+    this.conversationLock = new GlobalConversationLock({ paths, workerId });
     this.workerRuntime = null;
     this.config = null;
     this.browserStartPromise = null;
@@ -101,12 +112,48 @@ export class ChatGptChromeBridge {
     this.browserIdleCloseDueAt = null;
     this.lastBrowserClosedAt = null;
     this.lastBrowserCloseError = null;
+    this.lastRetentionCleanup = null;
+    this.lastRetentionCleanupError = null;
+    this.retentionCleanupPromise = null;
+    this.retentionCleanupTimer = null;
   }
 
   async initialize() {
     this.config = await loadConfig(this.paths);
     this.cache = (await readJson(this.paths.cacheFile, {})) || {};
+    try {
+      this.lastRetentionCleanup = await this.pruneInspectionArtifacts();
+      this.lastRetentionCleanupError = null;
+    } catch (error) {
+      this.lastRetentionCleanupError =
+        error instanceof Error ? error.message : String(error);
+    }
+    if (!this.retentionCleanupTimer) {
+      this.retentionCleanupTimer = setInterval(() => {
+        this.scheduleRetentionCleanup().catch(() => {});
+      }, 60 * 60 * 1000);
+      this.retentionCleanupTimer.unref?.();
+    }
     return this;
+  }
+
+  async scheduleRetentionCleanup() {
+    if (this.retentionCleanupPromise) return this.retentionCleanupPromise;
+    const cleanup = this.pruneInspectionArtifacts();
+    this.retentionCleanupPromise = cleanup;
+    try {
+      this.lastRetentionCleanup = await cleanup;
+      this.lastRetentionCleanupError = null;
+      return this.lastRetentionCleanup;
+    } catch (error) {
+      this.lastRetentionCleanupError =
+        error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      if (this.retentionCleanupPromise === cleanup) {
+        this.retentionCleanupPromise = null;
+      }
+    }
   }
 
   async listProfiles() {
@@ -520,13 +567,25 @@ export class ChatGptChromeBridge {
     };
   }
 
-  async openTaskPage({ profile, projectUrl, newChat = true } = {}) {
+  async openTaskPage({
+    profile,
+    projectUrl,
+    conversationUrl,
+    newChat = true,
+  } = {}) {
     const browser = await this.ensureBrowser({ profile, visible: false });
-    const destination =
-      projectUrl === undefined
+    const normalizedConversationUrl = conversationUrl
+      ? normalizeConversationUrl(conversationUrl)
+      : null;
+    const destination = normalizedConversationUrl
+      ? normalizedConversationUrl
+      : projectUrl === undefined
         ? this.config.projectUrl || CHATGPT_URL
         : normalizeProjectUrl(projectUrl) || CHATGPT_URL;
-    const page = newChat ? await browser.context.newPage() : browser.page;
+    const page =
+      newChat || normalizedConversationUrl
+        ? await browser.context.newPage()
+        : browser.page;
     const ownedPage = page !== browser.page;
     const atDestination =
       destination === CHATGPT_URL
@@ -548,11 +607,44 @@ export class ChatGptChromeBridge {
       );
     }
     this.workerAuthenticated = true;
+    let hydration = null;
+    let continuationState = null;
+    if (normalizedConversationUrl) {
+      const loadedConversationUrl = normalizeConversationUrl(page.url());
+      if (
+        conversationKeyFromUrl(loadedConversationUrl) !==
+        conversationKeyFromUrl(normalizedConversationUrl)
+      ) {
+        if (ownedPage) await page.close().catch(() => {});
+        throw new Error(
+          "ChatGPT did not open the exact requested conversation, so the bridge refused to send a reply.",
+        );
+      }
+      continuationState = await waitForConversationReplyReadiness(page);
+      hydration = {
+        hydrated: continuationState.assistantMessageCount > 0,
+        assistantMessageCount: continuationState.assistantMessageCount,
+        elapsedMs: continuationState.elapsedMs,
+      };
+      if (!continuationState.ready) {
+        if (ownedPage) await page.close().catch(() => {});
+        throw new Error(
+          `The ChatGPT conversation is not ready for a reply (${continuationState.reason}). ` +
+            "Keep waiting or inspect the same conversation; the bridge did not submit a follow-up.",
+        );
+      }
+    }
     return {
       page,
       ownedPage,
       profile: browser.profile,
-      projectUrl: destination === CHATGPT_URL ? null : destination,
+      projectUrl:
+        normalizedConversationUrl || destination === CHATGPT_URL
+          ? null
+          : destination,
+      conversationUrl: normalizedConversationUrl,
+      hydration,
+      continuationState,
     };
   }
 
@@ -598,6 +690,10 @@ export class ChatGptChromeBridge {
     attachments = [],
     profile,
     projectUrl,
+    conversationUrl: requestedConversationUrl,
+    parentJobId = null,
+    rootJobId = null,
+    replyDepth = null,
     reasoning,
     newChat = true,
     allowFallback = false,
@@ -608,22 +704,65 @@ export class ChatGptChromeBridge {
     onPhase = null,
   }) {
     if (!prompt || !String(prompt).trim()) throw new Error("A non-empty prompt is required.");
-    if (typeof onPhase === "function") {
-      onPhase("preparing", {
-        attachmentCount: Array.isArray(attachments) ? attachments.length : 0,
-      });
-    }
-    const prepared = await prepareAttachments(attachments, {
-      stateRoot: this.paths.stateRoot,
-      workerId: this.workerId,
-    });
+    const continuationUrl = requestedConversationUrl
+      ? normalizeConversationUrl(requestedConversationUrl)
+      : null;
+    let conversationLease = null;
+    let prepared = null;
     let opened = null;
     let taskPage = null;
     let conversationUrl = null;
     const requestedReasoning =
       reasoning || this.config.defaultReasoning || "auto";
     try {
-      opened = await this.openTaskPage({ profile, newChat, projectUrl });
+      if (continuationUrl) {
+        if (typeof onPhase === "function") {
+          onPhase("waiting_for_conversation", {
+            conversationUrl: continuationUrl,
+          });
+        }
+        const lockTimeoutSeconds = Math.max(
+          10,
+          Math.min(
+            MAX_JOB_TIMEOUT_SECONDS,
+            timeoutSeconds ||
+              this.config.timeoutSeconds ||
+              DEFAULT_CONFIG.timeoutSeconds,
+          ),
+        );
+        conversationLease = await this.conversationLock.acquire(
+          continuationUrl,
+          {
+            timeoutMs: lockTimeoutSeconds * 1000,
+            jobId,
+            onWaiting: (contention) => {
+              if (typeof onPhase === "function") {
+                onPhase("waiting_for_conversation", {
+                  conversationUrl: continuationUrl,
+                  contention,
+                });
+              }
+            },
+          },
+        );
+      }
+      if (typeof onPhase === "function") {
+        onPhase("preparing", {
+          attachmentCount: Array.isArray(attachments) ? attachments.length : 0,
+          conversationUrl: continuationUrl,
+          continuation: Boolean(continuationUrl),
+        });
+      }
+      prepared = await prepareAttachments(attachments, {
+        stateRoot: this.paths.stateRoot,
+        workerId: this.workerId,
+      });
+      opened = await this.openTaskPage({
+        profile,
+        newChat: continuationUrl ? false : newChat,
+        projectUrl,
+        conversationUrl: continuationUrl,
+      });
       taskPage = opened.page;
       conversationUrl = taskPage.url();
       if (jobId) {
@@ -633,6 +772,10 @@ export class ChatGptChromeBridge {
           conversationUrl,
           profile: opened.profile,
           projectUrl: opened.projectUrl,
+          parentJobId,
+          rootJobId,
+          replyDepth,
+          continuation: Boolean(continuationUrl),
           status: "preparing",
         });
       }
@@ -810,6 +953,10 @@ export class ChatGptChromeBridge {
         response: response.text,
         profile: opened.profile,
         projectUrl: opened.projectUrl,
+        continuation: Boolean(continuationUrl),
+        parentJobId,
+        rootJobId,
+        replyDepth,
         reasoning: reasoningSelection,
         conversationUrl,
         elapsedMs: response.elapsedMs,
@@ -834,7 +981,8 @@ export class ChatGptChromeBridge {
         this.rememberConversation(jobId, { conversationUrl });
       }
       if (opened?.ownedPage && taskPage) await taskPage.close().catch(() => {});
-      await prepared.cleanup().catch(() => {});
+      await prepared?.cleanup().catch(() => {});
+      await conversationLease?.release().catch(() => {});
     }
   }
 
@@ -850,21 +998,123 @@ export class ChatGptChromeBridge {
       updatedAt: new Date().toISOString(),
     };
     this.conversationRecords.set(jobId, record);
-    if (this.conversationRecords.size > 200) {
-      const oldest = Array.from(this.conversationRecords.entries())
-        .sort(
-          (left, right) =>
-            Date.parse(left[1].updatedAt || left[1].createdAt || 0) -
-            Date.parse(right[1].updatedAt || right[1].createdAt || 0),
-        )
-        .slice(0, this.conversationRecords.size - 200);
-      for (const [oldJobId] of oldest) this.conversationRecords.delete(oldJobId);
-    }
+    this.pruneConversationRecords();
     return record;
   }
 
   getConversationRecord(jobId) {
     return jobId ? this.conversationRecords.get(jobId) || null : null;
+  }
+
+  forgetConversation(jobId) {
+    if (!jobId || this.liveJobPages.has(jobId)) return false;
+    return this.conversationRecords.delete(jobId);
+  }
+
+  pruneConversationRecords({
+    now = Date.now(),
+    maxAgeMs = CONVERSATION_RECORD_RETENTION_MS,
+    maxRecords = MAX_RETAINED_CONVERSATION_RECORDS,
+    retainedJobIds = [],
+  } = {}) {
+    const protectedIds = new Set([
+      ...retainedJobIds,
+      ...this.liveJobPages.keys(),
+    ]);
+    const terminal = (record) =>
+      ["completed", "failed"].includes(record?.status);
+    const removedJobIds = [];
+    for (const [recordJobId, record] of this.conversationRecords) {
+      const updatedAt = Date.parse(record.updatedAt || record.createdAt || 0);
+      if (
+        !protectedIds.has(recordJobId) &&
+        terminal(record) &&
+        Number.isFinite(updatedAt) &&
+        updatedAt < now - maxAgeMs
+      ) {
+        this.conversationRecords.delete(recordJobId);
+        removedJobIds.push(recordJobId);
+      }
+    }
+    const overflow = Array.from(this.conversationRecords.entries())
+      .filter(
+        ([recordJobId, record]) =>
+          !protectedIds.has(recordJobId) && terminal(record),
+      )
+      .sort(
+        (left, right) =>
+          Date.parse(right[1].updatedAt || right[1].createdAt || 0) -
+          Date.parse(left[1].updatedAt || left[1].createdAt || 0),
+      )
+      .slice(Math.max(0, maxRecords));
+    for (const [recordJobId] of overflow) {
+      this.conversationRecords.delete(recordJobId);
+      removedJobIds.push(recordJobId);
+    }
+    return {
+      removedJobIds: [...new Set(removedJobIds)],
+      retained: this.conversationRecords.size,
+      maxRecords,
+      maxAgeMs,
+    };
+  }
+
+  async pruneInspectionArtifacts({
+    now = Date.now(),
+    maxAgeMs = INSPECTION_ARTIFACT_RETENTION_MS,
+    maxFiles = MAX_RETAINED_INSPECTION_ARTIFACTS,
+  } = {}) {
+    const inspectionDirectory = path.join(this.paths.stateRoot, "inspections");
+    let entries;
+    try {
+      entries = await fs.readdir(inspectionDirectory, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return {
+          removedFiles: 0,
+          retainedFiles: 0,
+          maxFiles,
+          maxAgeMs,
+          completedAt: new Date().toISOString(),
+        };
+      }
+      throw error;
+    }
+    const files = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".png")) {
+        continue;
+      }
+      const filePath = path.join(inspectionDirectory, entry.name);
+      const stat = await fs.stat(filePath).catch(() => null);
+      if (stat) files.push({ filePath, mtimeMs: stat.mtimeMs });
+    }
+    files.sort((left, right) => right.mtimeMs - left.mtimeMs);
+    const protectedPaths = new Set();
+    for (const record of this.conversationRecords.values()) {
+      const candidates = [
+        record.inspectionScreenshotPath,
+        record.responseFiles?.inspectionScreenshotPath,
+      ];
+      for (const candidate of candidates) {
+        if (candidate) protectedPaths.add(path.resolve(candidate));
+      }
+    }
+    const removals = files.filter(
+      (file, index) =>
+        !protectedPaths.has(path.resolve(file.filePath)) &&
+        (index >= maxFiles || file.mtimeMs < now - maxAgeMs),
+    );
+    await Promise.all(
+      removals.map((file) => fs.rm(file.filePath, { force: true })),
+    );
+    return {
+      removedFiles: removals.length,
+      retainedFiles: files.length - removals.length,
+      maxFiles,
+      maxAgeMs,
+      completedAt: new Date().toISOString(),
+    };
   }
 
   async captureInspectionScreenshot(page, tokenValue) {
@@ -877,6 +1127,13 @@ export class ChatGptChromeBridge {
     try {
       await page.screenshot({ path: target, fullPage: false });
       await fs.chmod(target, 0o600);
+      try {
+        this.lastRetentionCleanup = await this.pruneInspectionArtifacts();
+        this.lastRetentionCleanupError = null;
+      } catch (error) {
+        this.lastRetentionCleanupError =
+          error instanceof Error ? error.message : String(error);
+      }
       return { screenshotPath: target, screenshotError: null };
     } catch (error) {
       return {
@@ -894,10 +1151,7 @@ export class ChatGptChromeBridge {
         "No ChatGPT conversation URL is available. Supply conversation_url or a job_id whose submission reached ChatGPT.",
       );
     }
-    if (!isAllowedChatGptUrl(resolved)) {
-      throw new Error(`Conversation inspection is limited to ChatGPT/OpenAI URLs: ${resolved}`);
-    }
-    return { conversationUrl: resolved, record };
+    return { conversationUrl: normalizeConversationUrl(resolved), record };
   }
 
   async resolveConversationPage({
@@ -1041,6 +1295,7 @@ export class ChatGptChromeBridge {
         this.rememberConversation(jobId, {
           conversationUrl: snapshot.url,
           lastInspectionAt: new Date().toISOString(),
+          inspectionScreenshotPath: screenshot.screenshotPath,
         });
       }
       return {
@@ -1139,6 +1394,19 @@ export class ChatGptChromeBridge {
       },
       responseFileRoot: path.join(this.paths.stateRoot, "response-files"),
       inspectionRoot: path.join(this.paths.stateRoot, "inspections"),
+      localRetention: {
+        conversationRecords: this.conversationRecords.size,
+        maxConversationRecords: MAX_RETAINED_CONVERSATION_RECORDS,
+        terminalRecordHours:
+          CONVERSATION_RECORD_RETENTION_MS / (60 * 60 * 1000),
+        maxInspectionArtifacts: MAX_RETAINED_INSPECTION_ARTIFACTS,
+        inspectionArtifactHours:
+          INSPECTION_ARTIFACT_RETENTION_MS / (60 * 60 * 1000),
+        lastInspectionCleanup: this.lastRetentionCleanup,
+        lastInspectionCleanupError: this.lastRetentionCleanupError,
+        downloadedResponseFilesAutomaticallyDeleted: false,
+        chatGptAccountConversationsDeleted: false,
+      },
       lastOptionSync: this.cache?.syncedAt || null,
       cachedReasoningOptions: this.cache?.reasoningOptions || [],
       globalSubmissionPacer: await this.submissionPacer.status(
@@ -1267,14 +1535,41 @@ export class AskJobQueue {
     this.serviceName = bridge?.serviceName || "ChatGPT";
     this.jobs = new Map();
     this.pending = [];
+    this.activeConversationKeys = new Set();
     this.running = 0;
     this.closing = false;
+    this.lastPrune = null;
+    this.pruneTimer = setInterval(() => this.prune(), 60 * 60 * 1000);
+    this.pruneTimer.unref?.();
   }
 
   create(params) {
     this.prune();
     const id = crypto.randomUUID();
-    const { jobLabel, ...askParams } = params;
+    const {
+      jobLabel,
+      continuation = false,
+      parentJobId = null,
+      rootJobId = null,
+      replyDepth = 0,
+      ...askParams
+    } = params;
+    const initialConversationUrl = askParams.conversationUrl
+      ? normalizeConversationUrl(askParams.conversationUrl)
+      : null;
+    if (continuation && !initialConversationUrl) {
+      throw new Error("A continuation job requires an exact ChatGPT conversation URL.");
+    }
+    const conversationKey = initialConversationUrl
+      ? conversationKeyFromUrl(initialConversationUrl)
+      : null;
+    const normalizedRootJobId = rootJobId || id;
+    const normalizedReplyDepth = Math.max(0, Number(replyDepth) || 0);
+    askParams.conversationUrl = initialConversationUrl;
+    askParams.newChat = continuation ? false : askParams.newChat;
+    askParams.parentJobId = parentJobId;
+    askParams.rootJobId = normalizedRootJobId;
+    askParams.replyDepth = normalizedReplyDepth;
     const label = String(
       jobLabel || askParams.prompt || `${this.serviceName} job`,
     )
@@ -1297,7 +1592,13 @@ export class AskJobQueue {
         ? askParams.attachments.length
         : 0,
       attachmentUpload: null,
-      conversationUrl: null,
+      continuation: Boolean(continuation),
+      parentJobId,
+      rootJobId: normalizedRootJobId,
+      replyDepth: normalizedReplyDepth,
+      conversationKey,
+      conversationUrl: initialConversationUrl,
+      contention: null,
       progress: null,
       responseFiles: null,
       expectResponseFiles: Boolean(askParams.expectResponseFiles),
@@ -1313,6 +1614,33 @@ export class AskJobQueue {
     this.pending.push({ job, params: askParams });
     queueMicrotask(() => this.pump());
     return this.publicJob(job);
+  }
+
+  createReply({ sourceJobId, conversationUrl, ...params }) {
+    this.prune();
+    const source = sourceJobId ? this.get(sourceJobId) : null;
+    if (source && source.status !== "completed") {
+      throw new Error(
+        `${this.serviceName} job ${source.id} is ${source.status} in phase ${source.phase}. ` +
+          "Only a completed job can be continued; keep waiting or inspect it instead of replying.",
+      );
+    }
+    const targetUrl = normalizeConversationUrl(
+      conversationUrl ||
+        source?.result?.conversationUrl ||
+        source?.conversationUrl ||
+        "",
+    );
+    const sourceProfile = source?.result?.profile?.directory || null;
+    return this.create({
+      ...params,
+      profile: params.profile || sourceProfile || undefined,
+      conversationUrl: targetUrl,
+      continuation: true,
+      parentJobId: source?.id || null,
+      rootJobId: source?.rootJobId || source?.id || null,
+      replyDepth: source ? Number(source.replyDepth || 0) + 1 : 0,
+    });
   }
 
   concurrencyLimit() {
@@ -1331,14 +1659,26 @@ export class AskJobQueue {
     if (this.closing) return;
     const limit = this.concurrencyLimit();
     while (this.running < limit && this.pending.length) {
-      const { job, params } = this.pending.shift();
+      const runnableIndex = this.pending.findIndex(
+        ({ job }) =>
+          !job.conversationKey ||
+          !this.activeConversationKeys.has(job.conversationKey),
+      );
+      if (runnableIndex < 0) break;
+      const [{ job, params }] = this.pending.splice(runnableIndex, 1);
       this.running += 1;
+      if (job.conversationKey) {
+        this.activeConversationKeys.add(job.conversationKey);
+      }
       this.run(job, params).finally(() => this.finish(job));
     }
   }
 
   async finish(job) {
     this.running -= 1;
+    if (job.conversationKey) {
+      this.activeConversationKeys.delete(job.conversationKey);
+    }
     if (this.running === 0 && this.pending.length === 0) {
       this.closing = true;
       try {
@@ -1360,7 +1700,10 @@ export class AskJobQueue {
         this.closing = false;
       }
     }
-    job.resolve();
+    job.resolve?.();
+    job.resolve = null;
+    job.promise = null;
+    this.prune();
     this.pump();
   }
 
@@ -1390,12 +1733,17 @@ export class AskJobQueue {
       if (record?.responseFiles) job.responseFiles = record.responseFiles;
       job.status = "failed";
       this.setPhase(job, "failed");
+      this.bridge.rememberConversation?.(job.id, {
+        conversationUrl: job.conversationUrl,
+        status: "failed",
+      });
     } finally {
       job.completedAt = new Date().toISOString();
     }
   }
 
   get(id) {
+    this.prune();
     const job = this.jobs.get(id);
     if (!job) throw new Error(`Unknown ${this.serviceName} job ID: ${id}`);
     return job;
@@ -1414,7 +1762,18 @@ export class AskJobQueue {
     if (details.pacing) job.pacing = details.pacing;
     if (details.submission) job.submission = details.submission;
     if (details.attachmentUpload) job.attachmentUpload = details.attachmentUpload;
-    if (details.conversationUrl) job.conversationUrl = details.conversationUrl;
+    if (details.conversationUrl) {
+      job.conversationUrl = details.conversationUrl;
+      try {
+        job.conversationKey = conversationKeyFromUrl(details.conversationUrl);
+        if (job.status === "running") {
+          this.activeConversationKeys.add(job.conversationKey);
+        }
+      } catch {
+        // A project landing page is expected before a new chat receives its URL.
+      }
+    }
+    if (details.contention) job.contention = details.contention;
     if (details.progress) job.progress = details.progress;
     if (details.responseFiles) job.responseFiles = details.responseFiles;
   }
@@ -1454,7 +1813,13 @@ export class AskJobQueue {
       submission: job.submission,
       attachmentCount: job.attachmentCount,
       attachmentUpload: job.attachmentUpload,
+      continuation: job.continuation,
+      parentJobId: job.parentJobId,
+      rootJobId: job.rootJobId,
+      replyDepth: job.replyDepth,
+      conversationKey: job.conversationKey,
       conversationUrl: job.conversationUrl,
+      contention: job.contention,
       progress: job.progress,
       expectResponseFiles: job.expectResponseFiles,
       responseFiles: job.responseFiles,
@@ -1467,6 +1832,10 @@ export class AskJobQueue {
     if (!result) return null;
     return {
       conversationUrl: result.conversationUrl || null,
+      continuation: Boolean(result.continuation),
+      parentJobId: result.parentJobId || null,
+      rootJobId: result.rootJobId || null,
+      replyDepth: result.replyDepth ?? 0,
       elapsedMs: result.elapsedMs ?? null,
       model: result.model || null,
       reasoning: result.reasoning || null,
@@ -1514,6 +1883,7 @@ export class AskJobQueue {
   }
 
   list({ status = "all", limit = 50 } = {}) {
+    this.prune();
     const boundedLimit = Math.max(1, Math.min(100, Number(limit) || 50));
     return Array.from(this.jobs.values())
       .filter((job) => status === "all" || job.status === status)
@@ -1523,6 +1893,7 @@ export class AskJobQueue {
   }
 
   summary() {
+    this.prune();
     const jobs = Array.from(this.jobs.values());
     const phases = {};
     for (const job of jobs) phases[job.phase] = (phases[job.phase] || 0) + 1;
@@ -1533,19 +1904,72 @@ export class AskJobQueue {
       completed: jobs.filter((job) => job.status === "completed").length,
       failed: jobs.filter((job) => job.status === "failed").length,
       phases,
+      retention: {
+        terminalHours: TERMINAL_JOB_RETENTION_MS / (60 * 60 * 1000),
+        maxTerminalJobs: MAX_RETAINED_TERMINAL_JOBS,
+        retainedTerminalJobs: jobs.filter((job) =>
+          ["completed", "failed"].includes(job.status),
+        ).length,
+        lastPrunedAt: this.lastPrune?.completedAt || null,
+        lastRemovedCount: this.lastPrune?.removedJobIds?.length || 0,
+      },
     };
   }
 
-  prune() {
-    const oldest = Date.now() - 24 * 60 * 60 * 1000;
+  prune({
+    now = Date.now(),
+    maxAgeMs = TERMINAL_JOB_RETENTION_MS,
+    maxTerminalJobs = MAX_RETAINED_TERMINAL_JOBS,
+  } = {}) {
+    const protectedLineageIds = new Set();
+    for (const job of this.jobs.values()) {
+      if (!["queued", "running"].includes(job.status)) continue;
+      if (job.parentJobId) protectedLineageIds.add(job.parentJobId);
+      if (job.rootJobId) protectedLineageIds.add(job.rootJobId);
+    }
+    const removable = (job) =>
+      ["completed", "failed"].includes(job.status) &&
+      job.completedAt &&
+      !protectedLineageIds.has(job.id);
+    const removedJobIds = [];
     for (const [id, job] of this.jobs) {
       if (
-        job.completedAt &&
-        Date.parse(job.completedAt) < oldest &&
-        ["completed", "failed"].includes(job.status)
+        removable(job) &&
+        Date.parse(job.completedAt) < now - maxAgeMs
       ) {
         this.jobs.delete(id);
+        removedJobIds.push(id);
       }
     }
+    const overflow = Array.from(this.jobs.values())
+      .filter(removable)
+      .sort(
+        (left, right) =>
+          Date.parse(right.completedAt) - Date.parse(left.completedAt) ||
+          Date.parse(right.createdAt || 0) - Date.parse(left.createdAt || 0),
+      )
+      .slice(Math.max(0, maxTerminalJobs));
+    for (const job of overflow) {
+      this.jobs.delete(job.id);
+      removedJobIds.push(job.id);
+    }
+    for (const removedJobId of new Set(removedJobIds)) {
+      this.bridge.forgetConversation?.(removedJobId);
+    }
+    const conversationRetention = this.bridge.pruneConversationRecords?.({
+      now,
+      maxAgeMs,
+      maxRecords: maxTerminalJobs,
+      retainedJobIds: this.jobs.keys(),
+    });
+    this.lastPrune = {
+      completedAt: new Date(now).toISOString(),
+      removedJobIds: [...new Set(removedJobIds)],
+      retainedJobs: this.jobs.size,
+      maxAgeMs,
+      maxTerminalJobs,
+      conversationRetention: conversationRetention || null,
+    };
+    return this.lastPrune;
   }
 }

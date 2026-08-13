@@ -9,6 +9,7 @@ import { chromium } from "playwright-core";
 import {
   authenticationStatus,
   collectResponseFiles,
+  conversationReplyState,
   discoverResponseFileCandidates,
   discoverAvailableOptions,
   inspectConversationState,
@@ -17,6 +18,7 @@ import {
   submitPrompt,
   waitForAuthenticationStatus,
   waitForAssistantResponse,
+  waitForConversationReplyReadiness,
 } from "../lib/ui-adapter.mjs";
 
 const chromeExecutable =
@@ -133,6 +135,64 @@ test("discovers changing model/reasoning labels and waits for a response", async
   });
   assert.equal(response.text, "Fixture response complete.");
   assert.equal(response.completionSignal, "copy-turn-action-button");
+});
+
+test("requires a stable completed assistant turn before allowing a conversation reply", async (t) => {
+  const browser = await chromium.launch({
+    executablePath: chromeExecutable,
+    headless: true,
+  });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main>
+      <section id="messages">
+        <section data-testid="conversation-turn-user-1" data-turn="user">
+          <article data-message-author-role="user">Initial question</article>
+        </section>
+        <section data-testid="conversation-turn-assistant-1" data-turn="assistant">
+          <article data-message-author-role="assistant">Completed answer</article>
+          <button data-testid="copy-turn-action-button" aria-label="Copy response">Copy</button>
+        </section>
+      </section>
+      <form><div id="prompt-textarea" role="textbox" contenteditable="true"></div></form>
+    </main>
+  `);
+
+  const ready = await waitForConversationReplyReadiness(page, {
+    timeoutMs: 2_000,
+    quietMs: 100,
+  });
+  assert.equal(ready.ready, true);
+  assert.equal(ready.lastTurn.role, "assistant");
+  assert.equal(ready.latestAssistant.terminal, true);
+
+  await page.locator("#messages").evaluate((messages) => {
+    const userTurn = document.createElement("section");
+    userTurn.dataset.testid = "conversation-turn-user-2";
+    userTurn.dataset.turn = "user";
+    const message = document.createElement("article");
+    message.dataset.messageAuthorRole = "user";
+    message.textContent = "An unanswered external follow-up";
+    userTurn.append(message);
+    messages.append(userTurn);
+  });
+  let blocked = await conversationReplyState(page);
+  assert.equal(blocked.ready, false);
+  assert.equal(blocked.reason, "latest-turn-not-assistant");
+
+  await page
+    .locator('[data-testid="conversation-turn-user-2"]')
+    .evaluate((element) => element.remove());
+  await page.locator("main").evaluate((main) => {
+    const stop = document.createElement("button");
+    stop.dataset.testid = "stop-button";
+    stop.textContent = "Stop";
+    main.append(stop);
+  });
+  blocked = await conversationReplyState(page);
+  assert.equal(blocked.ready, false);
+  assert.equal(blocked.reason, "response-active");
 });
 
 test("uploads multiple exact files, waits for preparation, and then sends once", async (t) => {
