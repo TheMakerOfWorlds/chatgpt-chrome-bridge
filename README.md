@@ -1,21 +1,18 @@
-# ChatGPT + Grok Chrome Bridge
+# ChatGPT Chrome Bridge
 
-This personal Codex plugin gives Codex two persistent, context-isolated account-backed workers:
+This personal Codex plugin gives Codex a persistent, context-isolated account-backed ChatGPT worker for deep reasoning, research, exploration, critique, synthesis, complex comparison, planning, explicit file analysis, deliberately authorized sanitized repository snapshots, generated artifacts, second opinions, and exact-thread follow-ups.
 
-- **ChatGPT** is the preferred worker for deep reasoning, research, exploration, critique, synthesis, complex comparison, planning, explicit file analysis, deliberately authorized sanitized repository snapshots, generated artifacts, and second opinions.
-- **Grok** is the preferred worker for natural writing and rewriting: prose, voice, tone, correspondence, scripts, posts, UX text, marketing copy, and stylistic variants.
+ChatGPT receives only the submitted prompt plus the exact files intentionally listed as attachments. It cannot see the Codex conversation, active project or repository, unlisted files, code, terminal output, local UI, private workspace state, or other agents. The configured website project is an organizational destination for new conversations, not a connection to the active Codex project. Every delegated assignment must stand on its own.
 
-Each service receives only the submitted prompt plus the exact files intentionally listed as attachments. Neither can see the Codex conversation, active project or repository, unlisted files, code, terminal output, local UI, private workspace state, or other agents. Each configured website project is an organizational destination for new conversations, not a connection to the active Codex project. Every delegated assignment must stand on its own.
-
-The plugin binds each worker to an exact Chrome profile directory rather than whichever Chrome window is focused. On Jackson's local Mac, both services use **Jackson Stone Personal** (`Profile 1`) even when many other Chrome profiles are open. Each service gets its own background browser/session seed, queue, shared submission pacer, option cache, status tools, inspection recovery path, and idle-close lifecycle.
+The plugin binds the worker to an exact Chrome profile directory rather than whichever Chrome window is focused. On Jackson's local Mac, it uses **Jackson Stone Personal** (`Profile 1`) even when many other Chrome profiles are open. The worker gets its own background browser/session seed, queue, shared submission pacer, option cache, status tools, inspection recovery path, and idle-close lifecycle.
 
 ## First use
 
-1. Install the plugin from the personal marketplace and start a new Codex task so both MCP servers and skills load.
-2. ChatGPT and Grok are preconfigured to use **Jackson Stone Personal** (`Profile 1`) locally. The exact configured directory wins even when another profile is focused.
-3. If a worker is signed out, say: “Refresh the ChatGPT worker login from Jackson Stone Personal” or “Refresh the Grok worker login from Jackson Stone Personal.” The bridge copies only supported session state into its isolated seed.
-4. If copying the regular session is insufficient, ask to open that service for login. Finish sign-in in the ordinary dedicated Chrome window, quit that Chrome instance completely (Command-Q on macOS), and then sync its options.
-5. You can then say: “Use ChatGPT to reason through these options,” “Follow up on that ChatGPT answer with this new information,” “Use Grok to rewrite this naturally,” “Delegate the market research portion to ChatGPT,” or “Have Grok write three versions in my voice.”
+1. Install the plugin from the personal marketplace and start a new Codex task so its MCP server and skill load.
+2. ChatGPT is preconfigured to use **Jackson Stone Personal** (`Profile 1`) locally. The exact configured directory wins even when another profile is focused.
+3. If the worker is signed out, say: “Refresh the ChatGPT worker login from Jackson Stone Personal.” The bridge copies only supported session state into its isolated seed.
+4. If copying the regular session is insufficient, ask to open ChatGPT for login. Finish sign-in in the ordinary dedicated Chrome window, quit that Chrome instance completely (Command-Q on macOS), and then sync its options.
+5. You can then say: “Use ChatGPT to reason through these options,” “Follow up on that ChatGPT answer with this new information,” or “Delegate the market research portion to ChatGPT.”
 
 If the selected regular Chrome profile is already signed in to ChatGPT, say: “Refresh the ChatGPT worker login from Chrome.” The bridge copies only the supported session state, then the regular and automation browsers continue in separate profile directories.
 
@@ -31,18 +28,6 @@ Every follow-up receives a new bridge job ID with `parentJobId`, `rootJobId`, an
 
 The normal effort selector, attachment upload, generated-file retrieval, two-to-four-hour response deadline, five-second global Send gate, Pro finality detector, browser inspection fallback, and idle-close behavior all apply to replies. Same-conversation replies remain FIFO inside one MCP worker. A filesystem-backed lease keyed by the ChatGPT conversation ID serializes the same chat across separate Codex workers; its heartbeat prevents a live hour-plus Pro reply from being mistaken for an abandoned lock. Unrelated conversations still use the full parallel queue.
 
-## Grok natural-writing worker
-
-`write_with_grok` is the preferred Codex-created writing action. It starts directly with the task—there is no “Act as an independent worker” preamble—and optionally adds explicitly supplied context, audience, voice, constraints, and deliverable sections. `ask_grok` passes a complete user-authored prompt through with minimal transformation.
-
-This installation files Grok chats in `https://grok.com/project/de8fe3b5-f7e9-4294-95fd-ba1452c5cbd6`. The project keeps the account workspace organized but supplies no Codex task context. Grok defaults to **Fast**, which is the appropriate low-latency natural-writing choice. `sync_grok_options` discovers the current choices visible to the signed-in account instead of hardcoding a permanent model list; observed choices currently include Fast, Auto, Expert, and Heavy. Codex should not silently select a more expensive option.
-
-Codex may choose Grok implicitly whenever it judges that natural writing is a good fit. Before routing, `get_grok_availability` reads a shared per-machine status without opening Chrome: `available` proceeds, `stale` or `unknown` permits one silent `verify_grok_availability` check, and `unavailable` tells Codex to skip Grok and use ChatGPT or local tools without retrying. A successful check is fresh for 15 minutes. Option sync, job launch, inspection, and live status checks all update the durable record, and `write_with_grok` / `ask_grok` enforce the same gate before creating a job. Once any worker observes a logout, other Codex tasks sharing the state see it immediately; deliberate login recovery resets the state for one new verification.
-
-Grok jobs support the same concurrency pattern as ChatGPT: up to 30 simultaneous tabs per Codex worker, globally paced Submit actions with a five-second minimum gap, durable job IDs, immediate `list_grok_jobs` status, bounded `wait_for_grok_response` calls that do not cancel the job, browser fail-safe inspection, focus-safe off-screen launch, isolated copies for multiple Codex tasks, and automatic idle close. A nonterminal job is never resubmitted merely because a status call returns before it finishes.
-
-The Grok bridge accepts the same exact-file attachment set and local safety checks, including private HEIC/HEIF-to-JPEG conversion. Uploads are external transmissions to the selected signed-in Grok account and may be retained or used according to that account's settings and xAI's current terms. Grok response-file download extraction is not claimed; the writing worker returns text and preserves the conversation URL plus inspection/screenshot recovery.
-
 ## Sanitized repository bundles
 
 `prepare_repository_bundle` creates a local ZIP plus a companion JSON manifest from an exact user-authorized repository root. It never uploads, commits, pushes, or otherwise transmits the archive. A later `ask_chatgpt` or `delegate_research_to_chatgpt` call may attach the returned ZIP only when the user has authorized that external upload.
@@ -57,7 +42,7 @@ Pattern-based scanning reduces risk but cannot prove that a repository contains 
 
 ## Exact file attachments
 
-`delegate_research_to_chatgpt`, `ask_chatgpt`, `reply_to_chatgpt_conversation`, `write_with_grok`, and `ask_grok` accept an optional `attachments` array of absolute local file paths. This is an explicit external upload through the selected signed-in website account, not implicit repository access. Codex should use it only when the user authorizes those exact files, tell the selected worker what to do with them in the standalone prompt or follow-up, and keep all unlisted files private.
+`delegate_research_to_chatgpt`, `ask_chatgpt`, and `reply_to_chatgpt_conversation` accept an optional `attachments` array of absolute local file paths. This is an explicit external upload through the selected signed-in ChatGPT account, not implicit repository access. Codex should use it only when the user authorizes those exact files, tell ChatGPT what to do with them in the standalone prompt or follow-up, and keep all unlisted files private.
 
 The bridge applies deliberately conservative guardrails:
 
@@ -88,7 +73,7 @@ Terminal job and paired conversation metadata are retained for at most 24 hours 
 
 Automatic disk cleanup is deliberately narrower. Stale internal inspection PNGs are age/count bounded, while screenshots still referenced by retained records are protected. The bridge never automatically deletes ChatGPT account conversations, downloaded response files, caller-selected output directories, completed repository ZIPs/manifests, or source attachments. Those are user-visible artifacts rather than disposable queue bookkeeping.
 
-Both skills allow implicit invocation, so a new Codex task can choose a worker without an explicit skill mention. Routing prefers ChatGPT for reasoning/research and Grok for natural writing, subject to Grok's shared availability gate. Repository browsing, local discovery, commands, and edits remain with Codex or a suitable repository-aware subagent.
+The ChatGPT skill allows implicit invocation, so a new Codex task can choose the worker without an explicit skill mention. Repository browsing, local discovery, commands, and edits remain with Codex or a suitable repository-aware subagent.
 
 Because ChatGPT's Cloudflare front door challenges true headless Chrome, background work uses a real native Chrome instance. On macOS the bridge launches it through LaunchServices with the official background/no-foreground option and also places its window off-screen before ChatGPT loads, so starting a job does not pop Chrome in front of the user's active application. Codex attaches afterward through a random loopback-only DevTools port. A deliberately visible inspection omits the background flag and can bring the controlled window on-screen.
 
@@ -98,15 +83,15 @@ Worker profiles are disposable, but refreshed login state is not: after a verifi
 
 ## Configuration
 
-ChatGPT runtime state defaults to `~/Library/Application Support/ChatGPT Chrome Bridge`; Grok state defaults to `~/Library/Application Support/Grok Chrome Bridge`. The respective environment overrides are `CHATGPT_CHROME_BRIDGE_STATE_DIR` / `GROK_CHROME_BRIDGE_STATE_DIR`, `CHATGPT_CHROME_USER_DATA_DIR` / `GROK_CHROME_USER_DATA_DIR`, and `CHATGPT_CHROME_EXECUTABLE` / `GROK_CHROME_EXECUTABLE`. Keeping state separate prevents one service's session, cache, or global submission gate from corrupting the other.
+ChatGPT runtime state defaults to `~/Library/Application Support/ChatGPT Chrome Bridge`. The environment overrides are `CHATGPT_CHROME_BRIDGE_STATE_DIR`, `CHATGPT_CHROME_USER_DATA_DIR`, and `CHATGPT_CHROME_EXECUTABLE`.
 
-Both workers default to a two-hour job response deadline configurable up to four hours, 30 concurrent tabs per Codex worker, and a global five-second submission interval configurable from 1–60 seconds. Prefer asynchronous jobs (`wait: false`) for parallel work. While a job is nonterminal, status-check the same ID rather than resubmitting its prompt.
+The worker defaults to a two-hour job response deadline configurable up to four hours, 30 concurrent tabs per Codex worker, and a global five-second submission interval configurable from 1–60 seconds. Prefer asynchronous jobs (`wait: false`) for parallel work. While a job is nonterminal, status-check the same ID rather than resubmitting its prompt.
 
 The UI adapter prefers stable test IDs and accessible names, caches only control signatures, expands the collapsed Advanced menu, enters the Effort submenu, and falls back to semantic rescanning when selectors stop working. Attachment upload similarly prefers the native file input, then the composer attachment control and accessible upload action. Generated-file discovery checks the final assistant turn semantically, with authenticated-request and direct browser-download paths. No website automation can promise survival across every future redesign; `sync_chatgpt_options(force_rescan: true)` is the option-control repair path, while `inspect_chatgpt_conversation` preserves a browser-level escape hatch for completion and response-file UI changes.
 
 ## Privacy
 
-Prompts, exact explicit attachment contents, and responses pass through the selected signed-in ChatGPT or Grok web account. The plugin keeps a separate private local automation copy of the selected profile's cookies and site storage for each service so regular Chrome and background workers can run concurrently. It does not copy saved passwords, browsing history, bookmarks, downloads, or arbitrary tabs. Temporary HEIC/HEIF JPEGs live only under the relevant bridge state directory for the active job and are removed afterward; source photos are never modified.
+Prompts, exact explicit attachment contents, and responses pass through the selected signed-in ChatGPT web account. The plugin keeps a private local automation copy of the selected profile's ChatGPT cookies and site storage so regular Chrome and the background worker can run concurrently. It does not copy saved passwords, browsing history, bookmarks, downloads, or arbitrary tabs. Temporary HEIC/HEIF JPEGs live only under the bridge state directory for the active job and are removed afterward; source photos are never modified.
 
 ChatGPT follow-ups read and extend the exact account conversation named by the target job or URL. Local retention pruning removes only bridge bookkeeping and stale internal inspection evidence; it does not remove or alter the corresponding website conversation. Conversely, deleting a website conversation outside the bridge can make a retained local URL unusable.
 
