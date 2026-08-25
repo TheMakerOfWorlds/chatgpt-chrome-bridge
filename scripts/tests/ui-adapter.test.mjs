@@ -564,7 +564,7 @@ test("keeps Pro interim cards nonterminal through progress flicker and returns t
   );
 });
 
-test("prefers the composer intelligence menu over model words in sidebar history", async (t) => {
+test("prefers the composer intelligence menu over attachment and sidebar controls", async (t) => {
   const browser = await chromium.launch({
     executablePath: chromeExecutable,
     headless: true,
@@ -584,8 +584,12 @@ test("prefers the composer intelligence menu over model words in sidebar history
     <main>
       <form onsubmit="return false">
         <div id="prompt-textarea" role="textbox" contenteditable="true"></div>
+        <button id="attachment-trigger" data-testid="composer-plus-btn" type="button" aria-haspopup="menu" aria-label="Add files and more"></button>
         <button id="intelligence-trigger" type="button" aria-haspopup="menu" aria-expanded="false">Extra High</button>
       </form>
+      <div id="attachment-menu" role="menu" hidden>
+        <div role="menuitem">Add photos &amp; files</div>
+      </div>
       <div id="intelligence-menu" role="menu" hidden>
         <div role="menuitemradio">Instant <span>5.5</span></div>
         <div role="menuitemradio">Medium</div>

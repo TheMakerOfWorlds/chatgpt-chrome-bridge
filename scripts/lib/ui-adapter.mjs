@@ -42,8 +42,8 @@ const COMPOSER_SELECTORS = [
 const MODEL_TRIGGER_SELECTORS = [
   '[data-testid="model-switcher-dropdown-button"]',
   '[data-testid*="model-switcher" i]',
-  'main form button[aria-haspopup="menu"]',
-  'form button[aria-haspopup="menu"]',
+  'main form button[aria-haspopup="menu"]:not([data-testid="composer-plus-btn"]):not([aria-label*="file" i]):not([aria-label*="photo" i]):not([aria-label*="attach" i])',
+  'form button[aria-haspopup="menu"]:not([data-testid="composer-plus-btn"]):not([aria-label*="file" i]):not([aria-label*="photo" i]):not([aria-label*="attach" i])',
   'main button[aria-label*="model" i][aria-haspopup]',
   'main form button[aria-label*="model" i]',
 ];
@@ -52,8 +52,8 @@ const REASONING_TRIGGER_SELECTORS = [
   '[data-testid*="reasoning" i]',
   '[data-testid*="effort" i]',
   '[data-testid*="thinking" i]',
-  'main form button[aria-haspopup="menu"]',
-  'form button[aria-haspopup="menu"]',
+  'main form button[aria-haspopup="menu"]:not([data-testid="composer-plus-btn"]):not([aria-label*="file" i]):not([aria-label*="photo" i]):not([aria-label*="attach" i])',
+  'form button[aria-haspopup="menu"]:not([data-testid="composer-plus-btn"]):not([aria-label*="file" i]):not([aria-label*="photo" i]):not([aria-label*="attach" i])',
   'main button[aria-label*="reasoning" i]',
   'main button[aria-label*="thinking" i]',
   'main button[aria-label*="effort" i]',
@@ -180,6 +180,13 @@ async function markSemanticTarget(page, kind) {
         } else {
           if (!element.matches('button, [role="button"]')) continue;
           if (element.closest("[data-sidebar-item], aside, nav")) continue;
+          if (
+            /(?:composer-plus|attach|upload|add (?:files?|photos?))/i.test(
+              text,
+            )
+          ) {
+            continue;
+          }
           const opensPopup = Boolean(element.getAttribute("aria-haspopup"));
           const inComposerForm = Boolean(element.closest("form"));
           if (opensPopup) score += 28;
