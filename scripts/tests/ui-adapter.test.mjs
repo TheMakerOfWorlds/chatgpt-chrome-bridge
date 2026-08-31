@@ -634,6 +634,116 @@ test("prefers the composer intelligence menu over attachment and sidebar control
   assert.equal(options.signatures.modelTrigger.text, "Extra High");
 });
 
+test("discovers and selects the redesigned thinking-effort Power slider", async (t) => {
+  const browser = await chromium.launch({
+    executablePath: chromeExecutable,
+    headless: true,
+  });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main>
+      <form onsubmit="return false">
+        <div id="prompt-textarea" role="textbox" contenteditable="true"></div>
+        <button data-testid="composer-plus-btn" type="button" aria-haspopup="menu" aria-label="Add files and more"></button>
+        <button id="intelligence-trigger" type="button" aria-haspopup="menu" aria-expanded="false">Extra High</button>
+      </form>
+      <div id="intelligence-menu" role="menu" hidden>
+        <div role="group" data-testid="composer-intelligence-picker-content">
+          <div data-testid="composer-model-picker-slider-simple-view" data-active="true">
+            <div
+              id="power"
+              role="menuitem"
+              tabindex="0"
+              aria-label="Power"
+              aria-keyshortcuts="ArrowLeft ArrowRight"
+              aria-describedby="power-value power-help"
+            ></div>
+            <span id="power-value">Extra High, 4 of 5.</span>
+            <span id="power-help">Use Left and Right arrow keys to adjust power.</span>
+          </div>
+          <div
+            id="select-model"
+            role="menuitem"
+            aria-label="Select model"
+            aria-expanded="false"
+          >Extra High</div>
+          <div role="menuitemradio" aria-checked="true">GPT-5.6 Sol</div>
+          <div role="menuitemradio" aria-checked="false">GPT-5.5</div>
+        </div>
+      </div>
+    </main>
+    <script>
+      const labels = ['Instant', 'Medium', 'High', 'Extra High', 'Pro'];
+      let position = 4;
+      const trigger = document.querySelector('#intelligence-trigger');
+      const menu = document.querySelector('#intelligence-menu');
+      const power = document.querySelector('#power');
+      const powerValue = document.querySelector('#power-value');
+      const selectModel = document.querySelector('#select-model');
+      const update = () => {
+        const label = labels[position - 1];
+        powerValue.textContent = label + ', ' + position + ' of ' + labels.length + '.';
+        trigger.textContent = label;
+        selectModel.textContent = label;
+        document.body.dataset.selectedEffort = label;
+      };
+      trigger.onclick = () => {
+        menu.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true');
+      };
+      power.onkeydown = (event) => {
+        if (event.key === 'ArrowLeft') position = Math.max(1, position - 1);
+        if (event.key === 'ArrowRight') position = Math.min(labels.length, position + 1);
+        update();
+      };
+      selectModel.onclick = () => {
+        document.body.dataset.selectModelClicks = String(
+          Number(document.body.dataset.selectModelClicks || 0) + 1
+        );
+      };
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          menu.hidden = true;
+          trigger.setAttribute('aria-expanded', 'false');
+        }
+      });
+      update();
+    </script>
+  `);
+
+  const options = await discoverAvailableOptions(page, {}, {
+    includeModels: false,
+  });
+  assert.deepEqual(options.reasoningOptions, [
+    "Instant",
+    "Medium",
+    "High",
+    "Extra High",
+    "Pro",
+  ]);
+  assert.equal(
+    await page.locator("body").getAttribute("data-selected-effort"),
+    "Extra High",
+  );
+  assert.equal(
+    await page.locator("body").getAttribute("data-select-model-clicks"),
+    null,
+  );
+
+  const selection = await selectPreference(page, "reasoning", "pro");
+  assert.equal(selection.selected, "Pro");
+  assert.equal(selection.fallback, false);
+  assert.equal(
+    await page.locator("body").getAttribute("data-selected-effort"),
+    "Pro",
+  );
+  assert.equal(
+    await page.locator("body").getAttribute("data-select-model-clicks"),
+    null,
+  );
+});
+
 test("expands Advanced and exposes only leaf Effort options when requested", async (t) => {
   const browser = await chromium.launch({
     executablePath: chromeExecutable,

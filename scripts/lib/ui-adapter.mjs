@@ -343,6 +343,12 @@ async function visiblePopupOptions(page, kind) {
         }
         if (
           pickerKind === "reasoning" &&
+          /(?:^|\s)(?:select\s+)?model(?:\s|$)/.test(normalized)
+        ) {
+          continue;
+        }
+        if (
+          pickerKind === "reasoning" &&
           !/reason|thinking|effort|fast|instant|\blow\b|\bmedium\b|standard|balanced|\bhigh\b|\bdeep\b|extended|\bmax(?:imum)?\b|\bpro\b/.test(
             normalized,
           )
@@ -365,6 +371,121 @@ async function visiblePopupOptions(page, kind) {
     },
     { prefix: tokenPrefix, pickerKind: kind },
   );
+}
+
+async function powerSliderState(locator) {
+  return locator.evaluate((element) => {
+    const panel = element.closest(
+      '[data-testid*="model-picker-slider-simple-view" i], [data-testid*="intelligence-picker-slider-simple-view" i]',
+    );
+    const active =
+      !element.hasAttribute("inert") &&
+      element.getAttribute("aria-disabled") !== "true" &&
+      !panel?.hasAttribute("inert") &&
+      panel?.getAttribute("data-active") !== "false";
+    const describedBy = (element.getAttribute("aria-describedby") || "")
+      .split(/\s+/)
+      .filter(Boolean);
+    const description = describedBy
+      .map((id) => document.getElementById(id)?.textContent || "")
+      .join(" ")
+      .trim()
+      .replace(/\s+/g, " ");
+    const match = description.match(/^(.+?),\s*(\d+)\s+of\s+(\d+)\b/i);
+    if (!match) {
+      return { active, description, label: null, position: null, total: null };
+    }
+    return {
+      active,
+      description,
+      label: match[1].trim(),
+      position: Number(match[2]),
+      total: Number(match[3]),
+    };
+  });
+}
+
+async function pressPowerSlider(page, locator, key) {
+  await locator.evaluate((element) => element.focus());
+  await page.keyboard.press(key);
+  await page.waitForTimeout(100);
+}
+
+async function setPowerSliderPosition(page, locator, targetPosition) {
+  let state = await powerSliderState(locator);
+  if (
+    !state.active ||
+    !Number.isInteger(state.position) ||
+    !Number.isInteger(state.total) ||
+    !Number.isInteger(targetPosition) ||
+    targetPosition < 1 ||
+    targetPosition > state.total ||
+    state.total > 12
+  ) {
+    throw new Error(
+      `ChatGPT's thinking-effort slider could not be positioned (${state.description || "state unavailable"}).`,
+    );
+  }
+  const key = targetPosition > state.position ? "ArrowRight" : "ArrowLeft";
+  for (let step = 0; step < Math.abs(targetPosition - state.position); step += 1) {
+    await pressPowerSlider(page, locator, key);
+  }
+  state = await powerSliderState(locator);
+  if (state.position !== targetPosition) {
+    throw new Error(
+      `ChatGPT's thinking-effort slider stopped at ${state.description || "an unknown position"}.`,
+    );
+  }
+  return state;
+}
+
+async function visiblePowerSliderOptions(page) {
+  const controls = page.locator(
+    '[role="menuitem"][aria-label="Power"][aria-keyshortcuts*="ArrowLeft"]',
+  );
+  const count = Math.min(await controls.count(), 6);
+  for (let index = 0; index < count; index += 1) {
+    const control = controls.nth(index);
+    const initial = await powerSliderState(control).catch(() => null);
+    if (
+      !initial?.active ||
+      !initial.label ||
+      !Number.isInteger(initial.position) ||
+      !Number.isInteger(initial.total) ||
+      initial.total < 1 ||
+      initial.total > 12
+    ) {
+      continue;
+    }
+    const marker = `power-slider-${crypto.randomUUID()}`;
+    await control.evaluate(
+      (element, value) =>
+        element.setAttribute("data-chatgpt-chrome-power-slider", value),
+      marker,
+    );
+    await setPowerSliderPosition(page, control, 1);
+    const options = [];
+    for (let position = 1; position <= initial.total; position += 1) {
+      const state = await powerSliderState(control);
+      if (!state.label || state.position !== position || state.total !== initial.total) {
+        await setPowerSliderPosition(page, control, initial.position).catch(() => {});
+        return [];
+      }
+      options.push({
+        label: state.label,
+        marker,
+        sliderPosition: position,
+        sliderTotal: state.total,
+        selected: position === initial.position,
+      });
+      if (position < initial.total) {
+        await pressPowerSlider(page, control, "ArrowRight");
+      }
+    }
+    await setPowerSliderPosition(page, control, initial.position);
+    return options;
+  }
+  return [];
 }
 
 async function markVisiblePopupControl(page, kind) {
@@ -474,8 +595,11 @@ async function openPicker(page, kind, cachedSignature = null) {
   const signature = await signatureFor(trigger.locator);
   await trigger.locator.click({ timeout: 5_000 });
   await page.waitForTimeout(220);
-  await openAdvancedPickerPath(page, kind);
-  const options = await visiblePopupOptions(page, kind);
+  let options = kind === "reasoning" ? await visiblePowerSliderOptions(page) : [];
+  if (!options.length) {
+    await openAdvancedPickerPath(page, kind);
+    options = await visiblePopupOptions(page, kind);
+  }
   return { trigger, signature, options };
 }
 
@@ -613,9 +737,15 @@ export async function selectPreference(
     );
   }
   const locator = page.locator(
-    `[data-chatgpt-chrome-option="${choice.option.marker}"]`,
+    choice.option.sliderPosition
+      ? `[data-chatgpt-chrome-power-slider="${choice.option.marker}"]`
+      : `[data-chatgpt-chrome-option="${choice.option.marker}"]`,
   );
-  await locator.click({ timeout: 5_000 });
+  if (choice.option.sliderPosition) {
+    await setPowerSliderPosition(page, locator, choice.option.sliderPosition);
+  } else {
+    await locator.click({ timeout: 5_000 });
+  }
   await page.waitForTimeout(250);
   await closePicker(page);
   return {
