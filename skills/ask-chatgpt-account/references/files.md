@@ -1,0 +1,36 @@
+# Attachments and generated files
+
+Read only for repository bundles, explicit attachments, or generated-file recovery.
+
+## Prepare repository context safely
+
+- Call `prepare_repository_bundle` only when the user clearly authorizes an exact repository root and intended scope for later sharing. Creating the bundle is local; passing its returned ZIP in `attachments` is a separate external transmission to ChatGPT and must also be within that authorization.
+- Prefer `selection: selected` with the smallest useful relative `include_paths`. Use `git-tracked` for committed source, or `git-worktree` for tracked files plus non-ignored untracked work. Use `directory` only for an exact non-Git directory the user deliberately names.
+- Never weaken mandatory exclusions. The action refuses filesystem/home roots, keychain, credential, Chrome/session, Codex-state, and bridge-state directories; does not follow symlinks; excludes Git metadata, dependencies, build products, caches, logs, credential-like filenames, opaque archives/packages/databases, and user-specified paths; and scans candidate contents for common private keys, access tokens, credentialed URLs, JWTs, and secret assignments.
+- Treat the scanner as risk reduction, not proof. It excludes each flagged file whole and reports only relative paths, reason categories, and detection types—never detected values. It aborts rather than silently truncating when candidate-count or total-byte limits are exceeded.
+- Review both returned MCP resources before upload: the ZIP and companion JSON manifest. Confirm the included paths are necessary, inspect every exclusion/warning, and spot-check the archive. Do not attach it if the scope is surprising or if another secret-scanning method finds a concern.
+- The default 80 MB uncompressed cap is designed to remain under the bridge's 100 MB request ceiling. A custom larger bundle may be useful for local/private sharing but can exceed ChatGPT's upload limit.
+- Attach only the returned ZIP path, not the manifest unless ChatGPT needs the manifest. Explain the repository snapshot and requested analysis in a standalone prompt. The ZIP is immutable local output with an SHA-256 hash; the source repository is never edited.
+
+## Attach exact files safely
+
+- Add `attachments` only when the user explicitly asks to send those exact files to ChatGPT or clearly identifies them as inputs for this worker. If Codex merely discovers an unmentioned local file that might help, ask before transmitting it.
+- Supply absolute paths to individual regular files. The bridge never expands directories, globs, symlinks, or recursive workspace selections. Keep the set minimal and relevant.
+- Never attach credentials, API keys, private keys, `.env` files, browser cookie/login databases, or unrelated personal/workspace data. The local validator rejects common secret and session-file patterns, but Codex remains responsible for judging the content.
+- The bridge accepts at most 10 files and 100 MB total per request. Its conservative local per-file limits are 20 MB for directly supported images, 50 MB for spreadsheets/documents/text/HEIC/HEIF inputs, and 100 MB for ZIP archives. ChatGPT account, project, rate, storage, and message limits can be lower and can change.
+- Direct image uploads use PNG, JPEG/JPG, or non-animated GIF. For Apple HEIC/HEIF photos, the bridge creates a private temporary JPEG, uploads that copy, reports both names/formats/sizes, deletes the temporary staging data when the job ends, and never modifies the original.
+- Prefer common documents, spreadsheets, presentations, text/code, sanitized ZIP archives, PNG/JPEG/GIF, HEIC, or HEIF. Export `.gdoc`, `.gsheet`, and `.gslides` shortcuts to a real file first.
+- An upload is an external transmission to the selected signed-in ChatGPT account and may be retained under that account, project, Library, and data-control settings. Do not imply it stayed local.
+- Inspect the returned `attachments` and `attachmentUpload` metadata before telling the user what was sent. It records the original representation, the sent representation, conversion status, count, UI method/evidence, and conversation URL.
+- The bridge selects all files once, waits until upload/progress controls clear and Send is enabled, then passes the single Send action through the global pacer. It never uses the Enter-key fallback for an attachment request and never automatically retries a failed upload, because failed attempts can consume account upload allowance. Inspect the terminal error and ask before any materially different retry.
+- ChatGPT can analyze an attached file and return text, but it still cannot change the local original. Codex must make and verify any requested local edits.
+
+## Collect generated response files
+
+- Generated response files are outputs from ChatGPT, distinct from input `attachments`. For any prompt asking for a document, spreadsheet, presentation, PDF, archive, image, or other downloadable artifact, set `expect_response_files: true`. State the desired filename, type, structure, and verification criteria in the standalone prompt.
+- Keep `download_response_files: true` (the default). The completed job's `responseFiles.files` entries provide collision-safe absolute local paths, byte sizes, MIME hints, SHA-256 hashes, and discovery methods. MCP `resource_link` blocks expose each file directly to Codex. A private JSON manifest records the collection without persisting signed query strings.
+- Use `response_file_output_directory` only when the output belongs in a particular user/workspace directory; it must be an exact absolute path. Otherwise use the bridge's private response-files directory. Existing files are never overwritten. The bridge accepts at most 20 generated files, 200 MB per file, and 500 MB total per collection.
+- Treat downloaded artifacts as untrusted external output. Never execute a returned program, macro, script, or archive merely because ChatGPT generated it. Inspect it with the appropriate local document, PDF, spreadsheet, presentation, image, text, or archive tooling and verify content before delivery.
+- `downloaded` means every detected file was saved; `partial`, `failed`, and an expected `none_found` mean automatic extraction needs attention. Call `collect_chatgpt_response_files` once with the same `job_id` (or retained `conversation_url`) to re-scan; this never resubmits the prompt. Set `rescan: false` to retrieve cached file metadata without creating collision copies.
+- If collection remains uncertain, call `inspect_chatgpt_conversation` on that same job/URL. It returns the signed-in page's active-state evidence, interim/final classification, latest response text, visible page text, file candidates, UI diagnostics, and a screenshot resource. Inspection defaults to `keep_open: false`, so its standalone browser closes immediately after the snapshot; use `keep_open: true` only when immediate browser control is actually needed, and expect the idle hold to expire after two minutes. Use `browser_visibility: visible` only when live browser control is useful, then call it with `browser_visibility: background` to move Chrome off-screen again. The retained conversation URL is the last-resort recovery handle even after the task tab and browser close.
+

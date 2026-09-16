@@ -32,6 +32,14 @@ New users choose their own Chrome profile and project preference; **no project**
 
 The ChatGPT bridge uses the website's current/default model, including **GPT-6** through the website's **Latest** selection. It does not pin GPT-5.6 or expose model switching to Codex. It only controls thinking effort. The default effort is **Extra High**; omit the per-request `reasoning` argument to select it automatically, or pass another currently visible effort for a one-off override. The adapter discovers the compact **Power** slider dynamically, including composer labels with a model badge such as **6 Pro**, and retains compatibility with **Advanced → Effort** menus. Syncing or changing effort preserves the selected model.
 
+## Compact status and diagnostics
+
+Routine bridge status and job listings return compact output by default. `get_chatgpt_bridge_status` reports configuration, browser state, job counts, updates and actionable errors. `list_chatgpt_jobs` reports IDs, phases, recovery URLs, bounded previews and file counts without full answers. Use its `status` and `limit` filters for a narrower list.
+
+Pass `details: true` to either tool for full diagnostic metadata. The same option is available on ask, delegate, reply and wait calls. A completed compact wait still returns the **complete answer, warnings and generated-file links**; only job metadata is reduced. Existing direct consumers of the old detailed status shape should request `details: true`.
+
+Codex loads a short core skill for ordinary use. Attachment and browser-recovery procedures are separate references, read only when needed. These changes reduce context payloads; exact token/credit savings depend on the Codex host and workload.
+
 ## ChatGPT conversation follow-ups
 
 `reply_to_chatgpt_conversation` continues an exact completed website conversation. It accepts either a completed `job_id` from the current Codex worker or the exact `conversation_url` returned by an earlier job. The URL is the durable continuation handle across Codex tasks, MCP restarts, and local retention pruning. The action never reuses whichever browser tab happens to be focused; it opens the exact conversation in an owned background tab, verifies the final URL, waits for the complete conversation to hydrate and remain stable, requires the latest authored turn to be a terminal assistant response, and refuses to submit while Stop/progress/research signals or interim Pro text remain.
@@ -113,6 +121,6 @@ Repository bundles are local-only until a separate attachment call transmits the
 
 Private Chrome launches use a 32 MiB HTTP disk-cache budget and disable Chrome's on-device model downloads. Service-worker asset caches are excluded from login snapshots; cookies, Local Storage, IndexedDB, and other session state are retained. A failed session copy removes its partial temporary directory and restores the previous destination if replacement fails.
 
-At startup, every 15 minutes while the bridge runs, and after worker shutdown, maintenance prunes disposable caches from idle bridge profiles and removes abandoned workers older than five minutes. It takes the session-copy lock, checks both owner/browser PIDs and live Chrome profile arguments, and skips active profiles. Workers marked for session recovery retain their login data. Symlinks are not followed; the regular Chrome profile, downloaded response files, and account conversations are outside cleanup scope. `get_chatgpt_bridge_status.browserCache` reports the policy and last cleanup/error.
+At startup, every 15 minutes while the bridge runs, and after worker shutdown, maintenance prunes disposable caches from idle bridge profiles and removes abandoned workers older than five minutes. It takes the session-copy lock, checks both owner/browser PIDs and live Chrome profile arguments, and skips active profiles. Workers marked for session recovery retain their login data. Symlinks are not followed; the regular Chrome profile, downloaded response files, and account conversations are outside cleanup scope. `get_chatgpt_bridge_status(details: true).browserCache` reports the policy and last cleanup/error.
 
 The 32 MiB budget applies to Chrome's HTTP cache, not all browser storage. Active jobs can temporarily use more space for website data. Completed workers are deleted after authenticated session persistence; login data and explicitly saved downloads are not subject to a destructive total-size quota.

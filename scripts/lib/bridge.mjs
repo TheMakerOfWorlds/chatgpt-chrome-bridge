@@ -1368,7 +1368,7 @@ export class ChatGptChromeBridge {
     }
   }
 
-  async status() {
+  async status({ details = true } = {}) {
     if (!this.config) await this.initialize();
     const result = {
       config: this.publicConfig(),
@@ -1423,7 +1423,7 @@ export class ChatGptChromeBridge {
     };
     if (this.page && !this.page.isClosed()) {
       result.authentication = await this.authenticationChecker(this.page);
-      result.ui = await this.uiDiagnosticsProvider(this.page);
+      if (details) result.ui = await this.uiDiagnosticsProvider(this.page);
     }
     return result;
   }
