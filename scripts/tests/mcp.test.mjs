@@ -66,6 +66,8 @@ test("MCP server advertises the optimized ChatGPT command surface", async (t) =>
     "list_chatgpt_jobs",
     "wait_for_chatgpt_response",
     "get_chatgpt_bridge_status",
+    "check_chatgpt_bridge_updates",
+    "update_chatgpt_bridge",
   ]) {
     assert.ok(names.includes(expected), `missing MCP tool ${expected}`);
   }

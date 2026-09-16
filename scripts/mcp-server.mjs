@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { installationPaths, updateInstallation } from "./lib/releases.mjs";
+import { readJson } from "./lib/config.mjs";
+
+if (process.argv.includes("--healthcheck")) {
+  process.stdout.write("ChatGPT Bridge dependencies loaded successfully.\n");
+  process.exit(0);
+}
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -31,7 +39,7 @@ const bridge = await new ChatGptChromeBridge().initialize();
 const jobs = new AskJobQueue(bridge);
 const server = new McpServer({
   name: "chatgpt-chrome-bridge",
-  version: "0.1.0",
+  version: (await readJson(fileURLToPath(new URL("../package.json", import.meta.url)))).version,
 });
 
 const attachmentPathsSchema = z
@@ -810,6 +818,7 @@ register(
     const jobSummary = jobs.summary();
     return {
       ...(await bridge.status()),
+      updates: await readJson(installationPaths(bridge.paths.stateRoot).state, { managed: false }),
       jobs: jobSummary,
       recentJobs: jobs.list({ limit: 20 }),
     };
@@ -835,6 +844,21 @@ register(
   },
 );
 
+register(
+  "check_chatgpt_bridge_updates",
+  { title: "Check ChatGPT Bridge Updates", description: "Check the configured GitHub stable release without installing it. Requires a managed install.", inputSchema: {}, annotations: { readOnlyHint: true, openWorldHint: true } },
+  () => updateInstallation({ paths: installationPaths(bridge.paths.stateRoot), checkOnly: true }),
+);
+register(
+  "update_chatgpt_bridge",
+  { title: "Update ChatGPT Bridge", description: "Download, verify and install the latest stable GitHub release for new Codex tasks. Existing jobs keep running on their loaded version. Requires a managed install.", inputSchema: {}, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true } },
+  async () => {
+    const paths = installationPaths(bridge.paths.stateRoot);
+    if (!(await readJson(paths.state))?.currentVersion) throw new Error("Run the repository installer first to enable managed updates.");
+    return updateInstallation({ paths });
+  },
+);
+
 let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
@@ -849,3 +873,10 @@ process.stdin.once("close", shutdown);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// Do not hold up MCP startup or change a process serving active jobs. Codex loads
+// the newly installed plugin at the next task boundary.
+const checkForUpdates = () => updateInstallation({ paths: installationPaths(bridge.paths.stateRoot), automatic: true }).catch(() => {});
+checkForUpdates();
+const updateTimer = setInterval(checkForUpdates, 6 * 60 * 60 * 1000);
+updateTimer.unref();

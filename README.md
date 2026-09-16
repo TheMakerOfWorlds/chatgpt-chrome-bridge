@@ -1,24 +1,30 @@
 # ChatGPT Chrome Bridge
 
-This personal Codex plugin gives Codex a persistent, context-isolated account-backed ChatGPT worker for deep reasoning, research, exploration, critique, synthesis, complex comparison, planning, explicit file analysis, deliberately authorized sanitized repository snapshots, generated artifacts, second opinions, and exact-thread follow-ups.
+This Codex plugin gives Codex a persistent, context-isolated account-backed ChatGPT worker for deep reasoning, research, exploration, critique, synthesis, complex comparison, planning, explicit file analysis, deliberately authorized sanitized repository snapshots, generated artifacts, second opinions, and exact-thread follow-ups.
 
 ChatGPT receives only the submitted prompt plus the exact files intentionally listed as attachments. It cannot see the Codex conversation, active project or repository, unlisted files, code, terminal output, local UI, private workspace state, or other agents. The configured website project is an organizational destination for new conversations, not a connection to the active Codex project. Every delegated assignment must stand on its own.
 
-The plugin binds the worker to an exact Chrome profile directory rather than whichever Chrome window is focused. On Jackson's local Mac, it uses **Jackson Stone Personal** (`Profile 1`) even when many other Chrome profiles are open. The worker gets its own background browser/session seed, queue, shared submission pacer, option cache, status tools, inspection recovery path, and idle-close lifecycle.
+The bridge uses your own Chrome profile and ChatGPT account in an isolated background browser. **macOS only** (Apple Silicon and Intel), with Google Chrome, Node.js 20+, and Codex. No OpenAI API key is needed.
 
-## First use
+## Install and connect
 
-1. Install the plugin from the personal marketplace and start a new Codex task so its MCP server and skill load.
-2. ChatGPT is preconfigured to use **Jackson Stone Personal** (`Profile 1`) locally. The exact configured directory wins even when another profile is focused.
-3. If the worker is signed out, say: “Refresh the ChatGPT worker login from Jackson Stone Personal.” The bridge copies only supported session state into its isolated seed.
-4. If copying the regular session is insufficient, ask to open ChatGPT for login. Finish sign-in in the ordinary dedicated Chrome window, quit that Chrome instance completely (Command-Q on macOS), and then sync its options.
-5. You can then say: “Use ChatGPT to reason through these options,” “Follow up on that ChatGPT answer with this new information,” or “Delegate the market research portion to ChatGPT.”
+Download this repository with **Code → Download ZIP**, extract it, and open **Setup.command**. The installer checks prerequisites, downloads the latest stable release, asks which Chrome profile to use, and verifies ChatGPT login. If sign-in is needed, finish it in the dedicated Chrome window, quit that instance with Command-Q, and press Return in the installer. Start a new Codex task when setup finishes.
 
-If the selected regular Chrome profile is already signed in to ChatGPT, say: “Refresh the ChatGPT worker login from Chrome.” The bridge copies only the supported session state, then the regular and automation browsers continue in separate profile directories.
+Or use Terminal:
 
-Delegated prompts begin with the task itself, without a generic worker-role preamble. This installation routes new delegated chats to the configured **Agents** project at `https://chatgpt.com/g/g-p-6a5e648cac488191befbdf735bb011fb/project` so the account workspace stays organized. Pass another `project_url`, or clear the configured project, when a task should go elsewhere.
+```sh
+git clone https://github.com/TheMakerOfWorlds/chatgpt-chrome-bridge.git
+cd chatgpt-chrome-bridge
+sh install.sh
+```
 
-The ChatGPT bridge leaves the website's current/default model unchanged—currently **GPT-5.6 Sol**—and does not expose model switching to Codex. It only controls thinking effort. The default effort is **Extra High**; omit the per-request `reasoning` argument to select it automatically, or pass another currently visible effort for a one-off override. When ChatGPT's compact power menu is closed, the adapter expands **Advanced**, opens **Effort**, and then selects the requested leaf option.
+[Complete setup and troubleshooting](docs/INSTALL.md) · [Publishing updates](docs/RELEASING.md)
+
+Automatic stable-release updates are enabled by default. The bridge checks GitHub at startup and every six hours while running, verifies the download, prepares dependencies separately, and installs the update for new Codex tasks. Active jobs continue on their current version. You can ask Codex to check or install updates; manual mode and rollback are available. Login data survives updates. Install with `--manual-updates` to opt out.
+
+New users choose their own Chrome profile and start without a ChatGPT project destination. Existing settings are preserved. Ask Codex to configure a project URL if you want new chats filed into one. Prompts begin directly with the task itself, without a generic worker-role preamble.
+
+The ChatGPT bridge uses the website's current/default model, including **GPT-6** through the website's **Latest** selection. It does not pin GPT-5.6 or expose model switching to Codex. It only controls thinking effort. The default effort is **Extra High**; omit the per-request `reasoning` argument to select it automatically, or pass another currently visible effort for a one-off override. The adapter discovers the compact **Power** slider dynamically, including composer labels with a model badge such as **6 Pro**, and retains compatibility with **Advanced → Effort** menus. Syncing or changing effort preserves the selected model.
 
 ## ChatGPT conversation follow-ups
 
@@ -96,3 +102,11 @@ Prompts, exact explicit attachment contents, and responses pass through the sele
 ChatGPT follow-ups read and extend the exact account conversation named by the target job or URL. Local retention pruning removes only bridge bookkeeping and stale internal inspection evidence; it does not remove or alter the corresponding website conversation. Conversely, deleting a website conversation outside the bridge can make a retained local URL unusable.
 
 Repository bundles are local-only until a separate attachment call transmits the returned ZIP. Their staging directories are removed after creation, while completed ZIPs and manifests remain private local files until the user deletes them. Bundling excludes common secrets and reports warnings, but it is not a substitute for repository-specific security review.
+
+## Lightweight browser storage
+
+Private Chrome launches use a 32 MiB HTTP disk-cache budget and disable Chrome's on-device model downloads. Service-worker asset caches are excluded from login snapshots; cookies, Local Storage, IndexedDB, and other session state are retained. A failed session copy removes its partial temporary directory and restores the previous destination if replacement fails.
+
+At startup, every 15 minutes while the bridge runs, and after worker shutdown, maintenance prunes disposable caches from idle bridge profiles and removes abandoned workers older than five minutes. It takes the session-copy lock, checks both owner/browser PIDs and live Chrome profile arguments, and skips active profiles. Workers marked for session recovery retain their login data. Symlinks are not followed; the regular Chrome profile, downloaded response files, and account conversations are outside cleanup scope. `get_chatgpt_bridge_status.browserCache` reports the policy and last cleanup/error.
+
+The 32 MiB budget applies to Chrome's HTTP cache, not all browser storage. Active jobs can temporarily use more space for website data. Completed workers are deleted after authenticated session persistence; login data and explicitly saved downloads are not subject to a destructive total-size quota.

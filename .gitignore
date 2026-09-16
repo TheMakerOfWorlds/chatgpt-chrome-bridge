@@ -25,3 +25,5 @@ attachment-staging/
 .vscode/
 *.swp
 *.swo
+
+dist/

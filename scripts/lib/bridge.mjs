@@ -1,3 +1,4 @@
+import { BROWSER_CACHE_POLICY } from "./profile-cache.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -128,10 +129,12 @@ export class ChatGptChromeBridge {
       this.lastRetentionCleanupError =
         error instanceof Error ? error.message : String(error);
     }
+    await this.profileStore.pruneCaches().catch(() => {});
     if (!this.retentionCleanupTimer) {
       this.retentionCleanupTimer = setInterval(() => {
         this.scheduleRetentionCleanup().catch(() => {});
-      }, 60 * 60 * 1000);
+        this.profileStore.pruneCaches().catch(() => {});
+      }, BROWSER_CACHE_POLICY.cleanupIntervalMs);
       this.retentionCleanupTimer.unref?.();
     }
     return this;
@@ -1394,6 +1397,11 @@ export class ChatGptChromeBridge {
       },
       responseFileRoot: path.join(this.paths.stateRoot, "response-files"),
       inspectionRoot: path.join(this.paths.stateRoot, "inspections"),
+      browserCache: {
+        policy: BROWSER_CACHE_POLICY,
+        lastCleanup: this.profileStore.lastCacheCleanup,
+        lastCleanupError: this.profileStore.lastCacheCleanupError,
+      },
       localRetention: {
         conversationRecords: this.conversationRecords.size,
         maxConversationRecords: MAX_RETAINED_CONVERSATION_RECORDS,
@@ -1512,6 +1520,7 @@ export class ChatGptChromeBridge {
     if (!persistenceError) {
       await this.profileStore.removeWorker(workerRuntime).catch(() => {});
     }
+    if (workerRuntime) await this.profileStore.pruneCaches().catch(() => {});
     if (persistenceError) {
       throw new Error(
         `The refreshed ${this.serviceName} session could not be persisted; the recoverable worker copy was retained. ${

@@ -1,3 +1,4 @@
+import { LIGHTWEIGHT_CHROME_ARGUMENTS } from "./profile-cache.mjs";
 import { spawn } from "node:child_process";
 
 const DEFAULT_STARTUP_GRACE_MS = 750;
@@ -13,6 +14,7 @@ export function buildNativeLoginArguments({
     "--new-window",
     "--no-first-run",
     "--no-default-browser-check",
+    ...LIGHTWEIGHT_CHROME_ARGUMENTS,
     url,
   ];
 }

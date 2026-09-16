@@ -634,7 +634,7 @@ test("prefers the composer intelligence menu over attachment and sidebar control
   assert.equal(options.signatures.modelTrigger.text, "Extra High");
 });
 
-test("discovers and selects the redesigned thinking-effort Power slider", async (t) => {
+test("discovers GPT-6 Power effort controls and preserves the Latest model selection", async (t) => {
   const browser = await chromium.launch({
     executablePath: chromeExecutable,
     headless: true,
@@ -646,7 +646,7 @@ test("discovers and selects the redesigned thinking-effort Power slider", async 
       <form onsubmit="return false">
         <div id="prompt-textarea" role="textbox" contenteditable="true"></div>
         <button data-testid="composer-plus-btn" type="button" aria-haspopup="menu" aria-label="Add files and more"></button>
-        <button id="intelligence-trigger" type="button" aria-haspopup="menu" aria-expanded="false">Extra High</button>
+        <button id="intelligence-trigger" type="button" aria-haspopup="menu" aria-expanded="false">6 Extra High</button>
       </form>
       <div id="intelligence-menu" role="menu" hidden>
         <div role="group" data-testid="composer-intelligence-picker-content">
@@ -667,8 +667,9 @@ test("discovers and selects the redesigned thinking-effort Power slider", async 
             role="menuitem"
             aria-label="Select model"
             aria-expanded="false"
-          >Extra High</div>
-          <div role="menuitemradio" aria-checked="true">GPT-5.6 Sol</div>
+          >6 Extra High</div>
+          <div id="latest-model" role="menuitemradio" aria-checked="true">Latest</div>
+          <div role="menuitemradio" aria-checked="false">GPT-5.6 Sol</div>
           <div role="menuitemradio" aria-checked="false">GPT-5.5</div>
         </div>
       </div>
@@ -684,8 +685,8 @@ test("discovers and selects the redesigned thinking-effort Power slider", async 
       const update = () => {
         const label = labels[position - 1];
         powerValue.textContent = label + ', ' + position + ' of ' + labels.length + '.';
-        trigger.textContent = label;
-        selectModel.textContent = label;
+        trigger.textContent = '6 ' + label;
+        selectModel.textContent = '6 ' + label;
         document.body.dataset.selectedEffort = label;
       };
       trigger.onclick = () => {
@@ -715,6 +716,7 @@ test("discovers and selects the redesigned thinking-effort Power slider", async 
   const options = await discoverAvailableOptions(page, {}, {
     includeModels: false,
   });
+  assert.deepEqual(options.modelOptions, []);
   assert.deepEqual(options.reasoningOptions, [
     "Instant",
     "Medium",
@@ -730,6 +732,7 @@ test("discovers and selects the redesigned thinking-effort Power slider", async 
     await page.locator("body").getAttribute("data-select-model-clicks"),
     null,
   );
+  assert.equal(await page.locator("#latest-model").getAttribute("aria-checked"), "true");
 
   const selection = await selectPreference(page, "reasoning", "pro");
   assert.equal(selection.selected, "Pro");
@@ -742,6 +745,8 @@ test("discovers and selects the redesigned thinking-effort Power slider", async 
     await page.locator("body").getAttribute("data-select-model-clicks"),
     null,
   );
+  assert.equal(await page.locator("#latest-model").getAttribute("aria-checked"), "true");
+  assert.equal(await page.locator("#intelligence-trigger").innerText(), "6 Pro");
 });
 
 test("expands Advanced and exposes only leaf Effort options when requested", async (t) => {

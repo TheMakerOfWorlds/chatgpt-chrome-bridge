@@ -24,9 +24,9 @@ import {
 test("accepts only canonical ChatGPT project destinations", () => {
   assert.equal(
     normalizeProjectUrl(
-      "https://chatgpt.com/g/g-p-6a5e648cac488191befbdf735bb011fb/project/?ignored=yes#section",
+      "https://chatgpt.com/g/g-p-testproject/project/?ignored=yes#section",
     ),
-    "https://chatgpt.com/g/g-p-6a5e648cac488191befbdf735bb011fb/project",
+    "https://chatgpt.com/g/g-p-testproject/project",
   );
   assert.equal(normalizeProjectUrl(""), null);
   assert.throws(

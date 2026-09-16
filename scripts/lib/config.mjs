@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pruneProfileCaches } from "./profile-cache.mjs";
 
 export const DEFAULT_CHROME_EXECUTABLE =
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -119,11 +120,15 @@ export async function readJson(file, fallback = null) {
 export async function writeJsonAtomic(file, value) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await fs.rename(temp, file);
+  try {
+    await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    await fs.rename(temp, file);
+  } finally {
+    await fs.rm(temp, { force: true });
+  }
 }
 
 export async function loadConfig(paths = bridgePaths()) {
@@ -256,7 +261,6 @@ const SESSION_PATHS = [
   "Session Storage",
   "IndexedDB",
   "WebStorage",
-  "Service Worker",
   "Trust Tokens",
   "Trust Tokens-journal",
 ];
@@ -270,26 +274,39 @@ async function pathExists(target) {
   }
 }
 
-async function replaceCopy(source, destination, { removeMissing = false } = {}) {
+export async function replaceCopy(source, destination, { removeMissing = false, fileSystem = fs } = {}) {
   if (!(await pathExists(source))) {
-    if (removeMissing) {
-      await fs.rm(destination, { recursive: true, force: true });
-    }
+    if (removeMissing) await fileSystem.rm(destination, { recursive: true, force: true });
     return false;
   }
-  await fs.mkdir(path.dirname(destination), { recursive: true });
-  const temp = `${destination}.syncing-${process.pid}-${crypto.randomUUID()}`;
-  await fs.cp(source, temp, {
-    recursive: true,
-    force: true,
-    filter: (item) => {
-      const base = path.basename(item);
-      return base !== "LOCK" && !base.startsWith("Singleton");
-    },
-  });
-  await fs.rm(destination, { recursive: true, force: true });
-  await fs.rename(temp, destination);
-  return true;
+  await fileSystem.mkdir(path.dirname(destination), { recursive: true });
+  const id = `${process.pid}-${crypto.randomUUID()}`;
+  const temp = `${destination}.syncing-${id}`;
+  const backup = `${destination}.replaced-${id}`;
+  let backedUp = false;
+  try {
+    await fileSystem.cp(source, temp, {
+      recursive: true, force: true,
+      filter: (item) => {
+        const base = path.basename(item);
+        return base !== "LOCK" && !base.startsWith("Singleton");
+      },
+    });
+    if (await pathExists(destination)) {
+      await fileSystem.rename(destination, backup);
+      backedUp = true;
+    }
+    try {
+      await fileSystem.rename(temp, destination);
+    } catch (error) {
+      if (backedUp) await fileSystem.rename(backup, destination);
+      throw error;
+    }
+    if (backedUp) await fileSystem.rm(backup, { recursive: true, force: true });
+    return true;
+  } finally {
+    await fileSystem.rm(temp, { recursive: true, force: true });
+  }
 }
 
 async function copySessionState({
@@ -361,6 +378,25 @@ async function withSessionSyncLock(
 export class ChromeProfileStore {
   constructor(paths = bridgePaths()) {
     this.paths = paths;
+    this.lastCacheCleanup = null;
+    this.lastCacheCleanupError = null;
+    this.cacheCleanupPromise = null;
+  }
+
+  async pruneCaches(options = {}) {
+    if (this.cacheCleanupPromise) return this.cacheCleanupPromise;
+    const cleanup = pruneProfileCaches(this.paths, { ...options, withLock: withSessionSyncLock });
+    this.cacheCleanupPromise = cleanup;
+    try {
+      this.lastCacheCleanup = await cleanup;
+      this.lastCacheCleanupError = null;
+      return this.lastCacheCleanup;
+    } catch (error) {
+      this.lastCacheCleanupError = error.message;
+      throw error;
+    } finally {
+      this.cacheCleanupPromise = null;
+    }
   }
 
   runtime(profile) {
@@ -422,28 +458,28 @@ export class ChromeProfileStore {
     const marker = await readJson(runtime.markerFile);
     if (marker && !force) return { ...runtime, copied: false, marker };
 
-    await fs.rm(runtime.root, { recursive: true, force: true });
-    const copied = await withSessionSyncLock(
-      path.join(seed.root, ".session-sync.lock"),
-      () =>
-        copySessionState({
+    return withSessionSyncLock(path.join(seed.root, ".session-sync.lock"), async () => {
+      await fs.rm(runtime.root, { recursive: true, force: true });
+      const nextMarker = {
+        version: 1, workerId: runtime.workerId, ownerPid: process.pid,
+        browserPid: null, sourceProfile: profile.directory,
+        createdAt: new Date().toISOString(), copied: [],
+      };
+      await writeJsonAtomic(runtime.markerFile, nextMarker);
+      try {
+        nextMarker.copied = await copySessionState({
           sourceUserDataDir: seed.userDataDir,
           sourceProfileDirectory: profile.directory,
           targetUserDataDir: runtime.userDataDir,
           targetProfileDirectory: profile.directory,
-        }),
-    );
-    const nextMarker = {
-      version: 1,
-      workerId: runtime.workerId,
-      ownerPid: process.pid,
-      browserPid: null,
-      sourceProfile: profile.directory,
-      createdAt: new Date().toISOString(),
-      copied,
-    };
-    await writeJsonAtomic(runtime.markerFile, nextMarker);
-    return { ...runtime, copied: true, marker: nextMarker };
+        });
+        await writeJsonAtomic(runtime.markerFile, nextMarker);
+        return { ...runtime, copied: true, marker: nextMarker };
+      } catch (error) {
+        await fs.rm(runtime.root, { recursive: true, force: true });
+        throw error;
+      }
+    });
   }
 
   async markWorkerBrowser(runtime, browserPid) {
@@ -465,6 +501,9 @@ export class ChromeProfileStore {
     if (path.resolve(expected.root) !== path.resolve(workerRuntime.root)) {
       throw new Error("Refusing to persist session state from an unexpected worker path.");
     }
+    await writeJsonAtomic(workerRuntime.markerFile, {
+      ...(await readJson(workerRuntime.markerFile, {})), recoveryRequired: true,
+    });
     const seed = this.runtime(profile);
     await fs.mkdir(seed.root, { recursive: true });
     return withSessionSyncLock(

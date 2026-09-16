@@ -1,3 +1,4 @@
+import { LIGHTWEIGHT_CHROME_ARGUMENTS } from "./profile-cache.mjs";
 import { execFile, spawn } from "node:child_process";
 import net from "node:net";
 import { promisify } from "node:util";
@@ -63,6 +64,7 @@ export function buildNativeControllerArguments({
     "--new-window",
     "--no-first-run",
     "--no-default-browser-check",
+    ...LIGHTWEIGHT_CHROME_ARGUMENTS,
     ...(background
       ? ["--window-position=-32000,-32000", "--window-size=1440,1000"]
       : []),

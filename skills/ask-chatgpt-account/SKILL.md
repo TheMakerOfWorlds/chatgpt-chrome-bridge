@@ -10,7 +10,7 @@ Use the `chatgpt-chrome-bridge` MCP tools as an independent, account-backed work
 ## Enforce the context boundary
 
 - Treat ChatGPT as a blank external worker that receives only the text deliberately included in the tool call plus the contents of exact files deliberately listed in `attachments`, including a separately reviewed repository ZIP when the user authorizes it. It has no implicit awareness of the current Codex task, conversation history, project, repository, unlisted files, code, terminal output, local applications, private state, or other workers' results.
-- Treat the configured **Agents** ChatGPT project as an organizational destination only. Filing a chat there does not transmit the active Codex project or task context.
+- Treat the optionally configured ChatGPT project as an organizational destination only. Filing a chat there does not transmit the active Codex project or task context.
 - Send only standalone prompts. Never refer to “this project,” “the code above,” “our repository,” “the current error,” or similar unstated context.
 - Use this worker for deep general investigation or reasoning-heavy standalone output, such as a research brief, market map, conceptual comparison, reusable plan, generic architecture, rigorous critique, or code example that does not depend on the local codebase.
 - Keep project-aware work with Codex or a repository-aware subagent. An explicit attachment is bounded context, not permission to infer or export neighboring files. Do not export broad workspace context merely to make an unsuitable task delegable. A repository bundle is allowed only when the user deliberately authorizes that root and scope; Codex must review its manifest before upload and remains responsible for local inspection, adaptation, implementation, and verification.
@@ -26,7 +26,7 @@ Use the `chatgpt-chrome-bridge` MCP tools as an independent, account-backed work
 
 1. Make the task fully self-contained. State every fact required to answer it and remove references that depend on Codex conversation or project context. Include only small, non-secret facts that are intentionally safe to transmit. If exact attachments are authorized, explain in the prompt what ChatGPT should do with them; never assume it can read anything else in the Codex workspace.
 2. Call `delegate_research_to_chatgpt`. Use the configured profile and ChatGPT project unless the user names another destination. The generated prompt begins directly with the task; do not add a worker-role preamble.
-3. The bridge leaves ChatGPT's current/default model unchanged and does not expose model switching. Omit `reasoning` to select the configured `Extra High` effort, or pass another visible effort only when the user requests it or the task materially benefits from a different choice.
+3. The bridge leaves ChatGPT's current/default model unchanged and does not expose model switching. It supports GPT-6 through the website's Latest selection; do not assume or request a GPT-5.6 pin. A model badge such as `6` in `6 Pro` is separate from the `Pro` thinking effort. Omit `reasoning` to select the configured `Extra High` effort, or pass another visible effort only when the user requests it or the task materially benefits from a different choice.
 4. Set `wait: true` only when blocking on the result is appropriate. For parallel work—especially `Pro` or any request that may take an hour or longer—set `wait: false`, retain every job ID, immediately submit other independent jobs or continue local work, inspect the group with `list_chatgpt_jobs`, and call `wait_for_chatgpt_response` for each job before synthesis.
 5. When the requested deliverable is a file, name its expected type/structure and review checks in the prompt, set `expect_response_files: true`, and optionally give an exact absolute `response_file_output_directory`. Leave `download_response_files` enabled.
 6. Attribute the returned material as ChatGPT's contribution. Reconcile it with local evidence and other sources rather than accepting contradictions silently.
@@ -91,8 +91,8 @@ Use `ask_chatgpt` for a direct user-authored prompt that should pass through wit
 
 ## Setup and account selection
 
-- Use the configured **Jackson Stone Personal** Chrome profile by default.
-- Keep delegated chats in the configured **Agents** ChatGPT project at `https://chatgpt.com/g/g-p-6a5e648cac488191befbdf735bb011fb/project` by default.
+- Use the locally configured Chrome profile. For first setup, list profiles and let the user choose their own account.
+- Use the locally configured ChatGPT project when present; otherwise create a normal ChatGPT conversation. Never assume the plugin author's profile or project.
 - Call `list_chrome_profiles` when the user asks to switch or a requested profile is ambiguous.
 - Call `configure_chatgpt_bridge` to remember a different profile, ChatGPT project URL, or default options.
 - Use `max_concurrent` to change the per-Codex-worker parallel-tab limit (1–30). This installation defaults to 30. ChatGPT account limits or local memory pressure may still reduce practical throughput; excess work stays queued rather than being discarded.
@@ -112,3 +112,9 @@ Use `ask_chatgpt` for a direct user-authored prompt that should pass through wit
 - Do not silently substitute a paid or more expensive option. Allow fallback only when the user permits it.
 - Do not present ChatGPT's response as independent verification. Verify high-stakes claims and requested citations separately.
 - Do not ask ChatGPT to perform local edits or pretend it inspected unlisted files. Codex remains responsible for any local action and for the final answer.
+
+## Installation and updates
+
+- For a new computer, use the repository's `Setup.command` or `sh install.sh` wizard. It selects the user's Chrome profile and verifies login in a normal Chrome window. No OpenAI API key or manual cookie export is needed.
+- Managed installs check stable GitHub releases automatically. Use `check_chatgpt_bridge_updates` for an explicit read-only check and `update_chatgpt_bridge` when asked to install an update. Report failures accurately; a GitHub outage leaves the current installation usable.
+- New Codex tasks load the installed update. Do not stop active jobs to switch versions. For manual mode or rollback, use the installed maintenance command documented in `docs/INSTALL.md`.

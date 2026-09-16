@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-const pluginRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputDirectory = path.resolve(
   process.env.CHATGPT_LIVE_ARTIFACT_OUTPUT ||
     path.join(process.cwd(), "chatgpt-live-artifact-output"),
 );
 const projectUrl =
   process.env.CHATGPT_LIVE_PROJECT_URL ||
-  "https://chatgpt.com/g/g-p-6a5e648cac488191befbdf735bb011fb/project";
+  undefined;
 const artifactPrompt =
   process.env.CHATGPT_LIVE_ARTIFACT_PROMPT ||
   "Create a tiny UTF-8 CSV file named bridge-pro-artifact.csv with exactly the columns item,status and exactly these two data rows: final_signal,passed and file_retrieval,passed. Return it as a downloadable file. In the final response, state that bridge-pro-artifact.csv is ready. Do not use external sources or personal data.";
