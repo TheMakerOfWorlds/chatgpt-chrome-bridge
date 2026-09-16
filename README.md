@@ -8,7 +8,13 @@ The bridge uses your own Chrome profile and ChatGPT account in an isolated backg
 
 ## Install and connect
 
-Download this repository with **Code → Download ZIP**, extract it, and open **Setup.command**. The installer checks prerequisites, downloads the latest stable release, asks which Chrome profile to use, and verifies ChatGPT login. If sign-in is needed, finish it in the dedicated Chrome window, quit that instance with Command-Q, and press Return in the installer. Start a new Codex task when setup finishes.
+**Easiest: ask Codex to set it up.** Paste this into a Codex task:
+
+> Install the ChatGPT Chrome Bridge from https://github.com/TheMakerOfWorlds/chatgpt-chrome-bridge. Read its AGENTS.md and docs/INSTALL.md, help me connect my own ChatGPT account, and ask whether I want new chats in no project or in a project I choose.
+
+Codex will help with prerequisites, account selection, login, and the project preference. This is an unofficial community project; it uses your own ChatGPT website session.
+
+For manual setup, download this repository with **Code → Download ZIP**, extract it, and open **Setup.command**. The installer checks prerequisites, downloads the latest stable release, asks which Chrome profile to use, and verifies ChatGPT login. If sign-in is needed, finish it in the dedicated Chrome window, quit that instance with Command-Q, and press Return in the installer. It then asks where new chats should go: **no project**, or a ChatGPT project URL from your account. Start a new Codex task when setup finishes.
 
 Or use Terminal:
 
@@ -22,7 +28,7 @@ sh install.sh
 
 Automatic stable-release updates are enabled by default. The bridge checks GitHub at startup and every six hours while running, verifies the download, prepares dependencies separately, and installs the update for new Codex tasks. Active jobs continue on their current version. You can ask Codex to check or install updates; manual mode and rollback are available. Login data survives updates. Install with `--manual-updates` to opt out.
 
-New users choose their own Chrome profile and start without a ChatGPT project destination. Existing settings are preserved. Ask Codex to configure a project URL if you want new chats filed into one. Prompts begin directly with the task itself, without a generic worker-role preamble.
+New users choose their own Chrome profile and project preference; **no project** is the default. Existing settings are preserved unless you choose a change. You can later ask Codex to change or clear the default project. Prompts begin directly with the task itself, without a generic worker-role preamble.
 
 The ChatGPT bridge uses the website's current/default model, including **GPT-6** through the website's **Latest** selection. It does not pin GPT-5.6 or expose model switching to Codex. It only controls thinking effort. The default effort is **Extra High**; omit the per-request `reasoning` argument to select it automatically, or pass another currently visible effort for a one-off override. The adapter discovers the compact **Power** slider dynamically, including composer labels with a model badge such as **6 Pro**, and retains compatibility with **Advanced → Effort** menus. Syncing or changing effort preserves the selected model.
 

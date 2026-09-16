@@ -4,13 +4,13 @@ import { disableLegacyInstall } from './lib/codex-registration.mjs';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
-import { bridgePaths, listChromeProfiles, loadConfig, resolveChromeProfile, saveConfig, readJson, writeJsonAtomic } from './lib/config.mjs';
+import { bridgePaths, listChromeProfiles, loadConfig, resolveChromeProfile, saveConfig, normalizeProjectUrl, readJson, writeJsonAtomic } from './lib/config.mjs';
 import { installationPaths, updateInstallation, rollbackInstallation, prepareRelease, activateRelease, withUpdateLock, run, writeMaintenanceCommand } from './lib/releases.mjs';
 
 export function parseArgs(args) {
   const result = { command: args[0] || 'help' };
-  const booleans = new Set(['skip-login', 'manual-updates', 'json']);
-  const values = new Set(['profile', 'from-bundle', 'manifest', 'codex']);
+  const booleans = new Set(['skip-login', 'manual-updates', 'json', 'no-project']);
+  const values = new Set(['profile', 'project-url', 'from-bundle', 'manifest', 'codex']);
   for (let i = 1; i < args.length; i++) {
     if (!args[i].startsWith('--')) throw new Error(`Unexpected argument: ${args[i]}`);
     const name = args[i].slice(2);
@@ -18,6 +18,8 @@ export function parseArgs(args) {
     else if (values.has(name) && args[i + 1] && !args[i + 1].startsWith('--')) result[name] = args[++i];
     else throw new Error(`Unknown or incomplete option: --${name}`);
   }
+  if (result['no-project'] && result['project-url'] !== undefined) throw new Error('Choose either --no-project or --project-url, not both.');
+  if (result['project-url'] !== undefined) normalizeProjectUrl(result['project-url']);
   return result;
 }
 
@@ -84,11 +86,39 @@ export async function setupLogin({ profile: requested, interactive = process.std
 }
 
 
+
+export async function setupProject({ projectUrl, noProject = false, interactive = process.stdin.isTTY, paths = bridgePaths(), prompt } = {}) {
+  if (noProject && projectUrl !== undefined) throw new Error('Choose either --no-project or --project-url, not both.');
+  const config = await loadConfig(paths);
+  let selected = noProject ? null : projectUrl;
+  let reader;
+  try {
+    if (selected === undefined) {
+      if (!interactive && !prompt) {
+        console.log('Project preference unchanged. Ask the user: no project, or a project in their own ChatGPT account? Then run project --no-project or project --project-url URL.');
+        return { projectUrl: config.projectUrl, changed: false, needsChoice: true };
+      }
+      const ask = prompt || (async question => {
+        reader ||= createInterface({ input: process.stdin, output: process.stdout });
+        return reader.question(question);
+      });
+      console.log('Where should new ChatGPT chats go? Use no project, or paste a project link from your own signed-in ChatGPT account.');
+      console.log(`Current destination: ${config.projectUrl || 'No project (ordinary chats)'}`);
+      const answer = (await ask('Project URL, "none" for no project, or Return to keep the current destination: ')).trim();
+      selected = answer || config.projectUrl;
+    }
+    selected = normalizeProjectUrl(selected);
+    await saveConfig({ ...config, projectUrl: selected }, paths);
+    console.log(`New chats will use: ${selected || 'No project (ordinary chats)'}.`);
+    return { projectUrl: selected, changed: selected !== config.projectUrl, needsChoice: false };
+  } finally { reader?.close(); }
+}
+
 export async function main(args = process.argv.slice(2)) {
   const options = parseArgs(args), paths = installationPaths();
   const output = value => console.log(JSON.stringify(value, null, 2));
   if (options.command === 'help' || options.command === '--help') {
-    console.log('ChatGPT Bridge: install | login | doctor | check | update | rollback | auto-on | auto-off\nInstall options: --skip-login --profile "Profile 1" --manual-updates --codex /path/to/codex\nFor an offline release: --from-bundle bridge.bundle.json.gz --manifest release.json');
+    console.log('ChatGPT Bridge: install | login | project | doctor | check | update | rollback | auto-on | auto-off\nInstall options: --skip-login --profile "Profile 1" --manual-updates --codex /path/to/codex\nProject preference: --no-project or --project-url https://chatgpt.com/g/g-p-.../project\nFor an offline release: --from-bundle bridge.bundle.json.gz --manifest release.json');
     return;
   }
   if (process.platform !== 'darwin' && !['check','doctor'].includes(options.command)) throw new Error('This release supports macOS with Google Chrome. Windows and Linux are not yet supported.');
@@ -115,20 +145,22 @@ export async function main(args = process.argv.slice(2)) {
     }
     const command = await writeMaintenanceCommand(paths);
     console.log(`Installed v${installed.currentVersion}. Maintenance command: ${command}`);
+    const managed = await import(pathToFileURL(path.join(installed.currentPath, 'scripts/manage.mjs')));
     if (!options['skip-login']) {
-      const managed = await import(pathToFileURL(path.join(installed.currentPath, 'scripts/manage.mjs')));
       await managed.setupLogin({ profile: options.profile });
     }
+    await managed.setupProject({ projectUrl: options['project-url'], noProject: options['no-project'] });
     console.log('Start a new Codex task and ask: "Use ChatGPT to help me with this."');
     return installed;
   }
+  if (options.command === 'project') return setupProject({ projectUrl: options['project-url'], noProject: options['no-project'] });
   if (options.command === 'login') return setupLogin({ profile: options.profile });
   if (options.command === 'doctor') {
     const state = await readJson(paths.state, {});
     let chrome = false; try { await fs.access(bridgePaths().chromeExecutable); chrome = true; } catch {}
     output({ platform: process.platform, node: process.version, chromeInstalled: chrome, installedVersion: state.currentVersion || null,
       automaticUpdates: state.autoUpdate ?? false, lastCheckedAt: state.lastCheckedAt || null, lastUpdateError: state.lastError || null,
-      configuredProfile: (await loadConfig()).profile, loginCheck: 'Run the login command to verify ChatGPT access.' });
+      configuredProfile: (await loadConfig()).profile, defaultProject: (await loadConfig()).projectUrl, loginCheck: 'Run the login command to verify ChatGPT access.' });
     return;
   }
   if (['auto-on','auto-off'].includes(options.command)) {

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { setupLogin, parseArgs } from '../manage.mjs';
+import { setupLogin, setupProject, parseArgs } from '../manage.mjs';
 import { bridgePaths, readJson } from '../lib/config.mjs';
 async function fixture(t) {
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'bridge-setup-'));
@@ -37,4 +37,41 @@ test('CLI rejects incomplete or misspelled flags',()=>{
   assert.equal(parseArgs(['install','--skip-login','--profile','Profile 2']).profile,'Profile 2');
   assert.throws(()=>parseArgs(['install','--profile']),/incomplete/);
   assert.throws(()=>parseArgs(['install','--force']),/Unknown/);
+});
+
+test('fresh project setup asks for a destination and Return chooses ordinary chats',async t=>{
+  const paths=await fixture(t);let asked=0;
+  const selected=await setupProject({paths,prompt:async question=>{asked++;assert.match(question,/Project URL/);return '';}});
+  assert.equal(asked,1);assert.equal(selected.projectUrl,null);assert.equal(selected.needsChoice,false);
+  assert.equal((await readJson(paths.configFile)).projectUrl,null);
+});
+test('project setup saves the user URL and preserves profile and effort',async t=>{
+  const paths=await fixture(t);await fs.mkdir(paths.stateRoot);
+  await fs.writeFile(paths.configFile,JSON.stringify({profile:'Profile 2',defaultReasoning:'High',projectUrl:null}));
+  await setupProject({paths,prompt:async()=> 'https://chatgpt.com/g/g-p-own/project/?tracking=test'});
+  const config=await readJson(paths.configFile);assert.equal(config.projectUrl,'https://chatgpt.com/g/g-p-own/project');
+  assert.equal(config.profile,'Profile 2');assert.equal(config.defaultReasoning,'High');
+  await setupProject({paths,prompt:async()=>''});assert.equal((await readJson(paths.configFile)).projectUrl,config.projectUrl);
+  await setupProject({paths,prompt:async()=> 'none'});assert.equal((await readJson(paths.configFile)).projectUrl,null);
+});
+test('explicit project choices do not prompt and no-project clears an existing destination',async t=>{
+  const paths=await fixture(t);const prompt=async()=>{throw new Error('must not ask twice');};
+  await setupProject({paths,projectUrl:'https://chatgpt.com/g/g-p-own/project',prompt});
+  assert.equal((await readJson(paths.configFile)).projectUrl,'https://chatgpt.com/g/g-p-own/project');
+  await setupProject({paths,noProject:true,prompt});assert.equal((await readJson(paths.configFile)).projectUrl,null);
+});
+test('noninteractive setup without a choice preserves the preference and reports the missing choice',async t=>{
+  const paths=await fixture(t);await setupProject({paths,projectUrl:'https://chatgpt.com/g/g-p-own/project'});
+  const before=await fs.readFile(paths.configFile,'utf8');
+  const result=await setupProject({paths,interactive:false});
+  assert.equal(result.needsChoice,true);assert.equal(result.changed,false);assert.equal(await fs.readFile(paths.configFile,'utf8'),before);
+});
+test('invalid and conflicting project choices cannot overwrite saved settings',async t=>{
+  const paths=await fixture(t);await setupProject({paths,noProject:true});const before=await fs.readFile(paths.configFile,'utf8');
+  await assert.rejects(setupProject({paths,projectUrl:'https://example.com/project'}),/ChatGPT project URL/);
+  await assert.rejects(setupProject({paths,projectUrl:'https://chatgpt.com/g/g-p-own/project',noProject:true}),/not both/);
+  assert.equal(await fs.readFile(paths.configFile,'utf8'),before);
+  assert.throws(()=>parseArgs(['install','--no-project','--project-url','https://chatgpt.com/g/g-p-own/project']),/not both/);
+  assert.throws(()=>parseArgs(['install','--project-url','bad']),/Invalid ChatGPT project/);
+  assert.equal(parseArgs(['project','--no-project'])['no-project'],true);
 });
