@@ -24,6 +24,16 @@ export function newer(a, b) {
   for (let i = 0; i < 3; i++) if (aa[i] !== bb[i]) return aa[i] > bb[i];
   return false;
 }
+export async function nodeExecutable() {
+  // Homebrew changes Cellar paths on upgrades; use its stable symlink when it
+  // resolves to this same runtime. Other Node installations retain execPath.
+  const actual = await fs.realpath(process.execPath);
+  for (const candidate of ['/opt/homebrew/bin/node', '/usr/local/bin/node']) {
+    if (await fs.realpath(candidate).catch(() => null) === actual) return candidate;
+  }
+  return process.execPath;
+}
+
 export function installationPaths(stateRoot = bridgePaths().stateRoot) {
   const root = path.join(stateRoot, 'application');
   return { root, releases: path.join(root, 'releases'), state: path.join(root, 'installation.json'),
@@ -146,7 +156,7 @@ export async function prepareRelease(paths, manifest, buffer, { execute = run } 
     }
     // An absolute Node path works when the GUI app has a minimal PATH.
     await writeJsonAtomic(path.join(staging, '.mcp.json'), { mcpServers: { [PLUGIN]: {
-      command: process.execPath, args: ['./scripts/mcp-server.mjs'], cwd: '.',
+      command: await nodeExecutable(), args: ['./scripts/mcp-server.mjs'], cwd: '.',
     } } });
     const npm = path.join(path.dirname(process.execPath), 'npm');
     await execute(npm, ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', path.join(staging, '.npm-cache')], { cwd: staging, timeout: 180_000, maxBuffer: 2 * 1024 * 1024 });
@@ -167,6 +177,16 @@ export async function pruneReleases(paths, state, snapshot = readProcessSnapshot
     if (keep.has(target) || processes.some(item => item.command.includes(target))) continue;
     await fs.rm(target, { recursive: true, force: true });
   }
+}
+
+export async function writeMaintenanceCommand(paths) {
+  const runner = path.join(paths.root, 'command.mjs');
+  await fs.writeFile(runner, `import fs from 'node:fs/promises';
+import { disableLegacyInstall } from './lib/codex-registration.mjs';\nimport {pathToFileURL} from 'node:url';\nconst state=JSON.parse(await fs.readFile(${JSON.stringify(paths.state)},'utf8'));\nconst {main}=await import(pathToFileURL(state.currentPath+'/scripts/manage.mjs'));\nawait main(process.argv.slice(2)).catch(error=>{console.error(error.message);process.exitCode=1;});\n`);
+  const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+  const command = path.join(paths.root, 'bridge');
+  await fs.writeFile(command, `#!/bin/sh\nexec ${quote(await nodeExecutable())} ${quote(runner)} "$@"\n`, { mode: 0o700 });
+  return command;
 }
 
 export async function activateRelease(paths, destination, manifest, { execute = run, codex = 'codex', autoUpdate = true } = {}) {
@@ -190,6 +210,7 @@ export async function activateRelease(paths, destination, manifest, { execute = 
     const state = { ...previous, schema: 1, repository: REPOSITORY, currentVersion: manifest.version,
       pluginVersion: manifest.pluginVersion, currentPath: destination, previousPath: previous.currentPath === destination ? previous.previousPath : previous.currentPath,
       codex, autoUpdate, installedAt: new Date().toISOString(), lastError: null, availableVersion: null };
+    await writeMaintenanceCommand(paths);
     await writeJsonAtomic(paths.state, state);
     await pruneReleases(paths, state).catch(() => {});
     return state;

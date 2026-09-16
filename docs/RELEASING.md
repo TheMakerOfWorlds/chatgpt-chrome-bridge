@@ -2,13 +2,13 @@
 
 The canonical source repository is `TheMakerOfWorlds/chatgpt-chrome-bridge`. Clients install **stable GitHub Releases**, not arbitrary branch snapshots. The repository can be public or private; public access is needed before uninvited people can install it. Never include runtime profiles, cookies, `.env` files, personal verification output, or account-specific project URLs in a release.
 
-1. Make and review the change. Update `package.json`, the root package version in `package-lock.json`, and the base version in `.codex-plugin/plugin.json` to the same new semantic version, such as `0.2.2`. Keep release versions unique; never replace the contents of an existing version.
+1. Make and review the change. Update `package.json`, the root package version in `package-lock.json`, and the base version in `.codex-plugin/plugin.json` to the same new semantic version, such as `0.2.3`. Keep release versions unique; never replace the contents of an existing version.
 2. Run `npm ci`, `npm run check`, `npm test`, and `npm run release:build`. Run a live account check when browser behavior changes. Commit the change and push it to GitHub.
 3. Tag that commit and push the tag:
 
    ```sh
-   git tag v0.2.2
-   git push origin main v0.2.2
+   git tag v0.2.3
+   git push origin main v0.2.3
    ```
 
 4. The **Release** GitHub Actions workflow runs tests, validates that the tag matches the package version, builds an explicit allowlist of release files, and publishes `release.json` plus `bridge.bundle.json.gz`. Check that the workflow and GitHub release completed successfully.

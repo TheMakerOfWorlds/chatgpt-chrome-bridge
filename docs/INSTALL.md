@@ -53,6 +53,12 @@ To opt out during installation: `sh install.sh --manual-updates`. For an unatten
 - **macOS will not open Setup.command**: Open Terminal in the extracted folder and run `sh install.sh`.
 - **GitHub release unavailable**: Check connectivity and repository access. A private repo requires `gh auth login`; a new fork needs its first published release and a changed repository identifier in the code.
 - **Tools have not changed after update**: Start a new Codex task. Existing tasks deliberately keep their loaded version.
-- **An old personal install is also enabled**: After its jobs finish, remove `chatgpt-chrome-bridge@personal` with `codex plugin remove chatgpt-chrome-bridge@personal`. Keep the new `chatgpt-bridge-releases` installation enabled. Removing the old plugin does not delete ChatGPT login state.
+- **An old personal install is also enabled**: Setup normally disables it for new tasks through Codex while retaining its files for existing workers. If migration reports a warning, disable the personal copy in Codex Plugins and keep `chatgpt-bridge-releases` enabled. Once its old jobs finish, you may uninstall the personal copy. Login state is stored separately.
 
 The bridge maintains small disposable browser caches automatically. Saved output files and protected login state are not deleted by storage cleanup.
+
+## Browser window preference
+
+The supported default is **background**: a normal Chrome window is positioned off-screen so the worker does not take focus. Ask Codex to configure the bridge for background operation (`headless: true`, the legacy parameter name) or visible operation (`headless: false`). Login always opens an ordinary visible Chrome window.
+
+That legacy parameter does not mean true windowless Chrome. A September 16, 2026 experiment using `--headless=new` on both Macs repeatedly stopped at ChatGPT's browser-check page, while normal background Chrome authenticated successfully. True headless mode is not offered as a working preference in this release. No hidden fallback changes a requested windowless mode into a visible browser.

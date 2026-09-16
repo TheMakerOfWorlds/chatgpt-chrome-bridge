@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
+import { disableLegacyInstall } from './lib/codex-registration.mjs';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { bridgePaths, listChromeProfiles, loadConfig, resolveChromeProfile, saveConfig, readJson, writeJsonAtomic } from './lib/config.mjs';
-import { installationPaths, updateInstallation, rollbackInstallation, prepareRelease, activateRelease, withUpdateLock, run } from './lib/releases.mjs';
+import { installationPaths, updateInstallation, rollbackInstallation, prepareRelease, activateRelease, withUpdateLock, run, writeMaintenanceCommand } from './lib/releases.mjs';
 
 export function parseArgs(args) {
   const result = { command: args[0] || 'help' };
@@ -82,14 +83,6 @@ export async function setupLogin({ profile: requested, interactive = process.std
   }
 }
 
-async function writeCommand(paths) {
-  const runner = path.join(paths.root, 'command.mjs');
-  await fs.writeFile(runner, `import fs from 'node:fs/promises';\nimport {pathToFileURL} from 'node:url';\nconst state=JSON.parse(await fs.readFile(${JSON.stringify(paths.state)},'utf8'));\nconst {main}=await import(pathToFileURL(state.currentPath+'/scripts/manage.mjs'));\nawait main(process.argv.slice(2)).catch(error=>{console.error(error.message);process.exitCode=1;});\n`);
-  const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
-  const command = path.join(paths.root, 'bridge');
-  await fs.writeFile(command, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(runner)} "$@"\n`, { mode: 0o700 });
-  return command;
-}
 
 export async function main(args = process.argv.slice(2)) {
   const options = parseArgs(args), paths = installationPaths();
@@ -115,7 +108,12 @@ export async function main(args = process.argv.slice(2)) {
         return activateRelease(paths, destination, manifest, { codex, autoUpdate: !options['manual-updates'] });
       });
     } else installed = await updateInstallation({ paths, codex, autoUpdate: !options['manual-updates'] });
-    const command = await writeCommand(paths);
+    try {
+      if (await disableLegacyInstall(codex)) console.log('Disabled the old personal install for new tasks; existing workers and their files are preserved.');
+    } catch (error) {
+      console.log(`Installation succeeded. If an old personal bridge is enabled, disable it in Codex Plugins. Migration detail: ${error.message}`);
+    }
+    const command = await writeMaintenanceCommand(paths);
     console.log(`Installed v${installed.currentVersion}. Maintenance command: ${command}`);
     if (!options['skip-login']) {
       const managed = await import(pathToFileURL(path.join(installed.currentPath, 'scripts/manage.mjs')));
