@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { gzipSync } from 'node:zlib';
-import { installationPaths, sha256, REPOSITORY, validateBundle, newer, prepareRelease, activateRelease, updateInstallation, rollbackInstallation, withUpdateLock } from '../lib/releases.mjs';
+import { installationPaths, sha256, REPOSITORY, validateBundle, newer, prepareRelease, activateRelease, updateInstallation, rollbackInstallation, withUpdateLock, writeMaintenanceCommand, run } from '../lib/releases.mjs';
 import { readJson, writeJsonAtomic } from '../lib/config.mjs';
 function release(version = '0.2.0') {
   const files = [
@@ -111,4 +111,16 @@ test('a live updater lock prevents concurrent installs; a dead owner is recovere
   let ran=false;
   await withUpdateLock(paths,async()=>{ran=true;});
   assert.equal(ran,true);
+});
+
+
+test('the installed maintenance command loads the selected release and passes arguments with spaces', async t => {
+  const {paths}=await fixture(t);
+  const releasePath=path.join(paths.releases,'v0.2.3 with spaces');
+  await fs.mkdir(path.join(releasePath,'scripts'),{recursive:true});
+  await fs.writeFile(path.join(releasePath,'scripts','manage.mjs'), 'export async function main(args) { console.log(JSON.stringify(args)); }');
+  await writeJsonAtomic(paths.state,{currentPath:releasePath});
+  const command=await writeMaintenanceCommand(paths);
+  const response=await run(command,['login','--profile','Profile 2']);
+  assert.deepEqual(JSON.parse(response.stdout),['login','--profile','Profile 2']);
 });

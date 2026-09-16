@@ -182,7 +182,7 @@ export async function pruneReleases(paths, state, snapshot = readProcessSnapshot
 export async function writeMaintenanceCommand(paths) {
   const runner = path.join(paths.root, 'command.mjs');
   await fs.writeFile(runner, `import fs from 'node:fs/promises';
-import { disableLegacyInstall } from './lib/codex-registration.mjs';\nimport {pathToFileURL} from 'node:url';\nconst state=JSON.parse(await fs.readFile(${JSON.stringify(paths.state)},'utf8'));\nconst {main}=await import(pathToFileURL(state.currentPath+'/scripts/manage.mjs'));\nawait main(process.argv.slice(2)).catch(error=>{console.error(error.message);process.exitCode=1;});\n`);
+import {pathToFileURL} from 'node:url';\nconst state=JSON.parse(await fs.readFile(${JSON.stringify(paths.state)},'utf8'));\nconst {main}=await import(pathToFileURL(state.currentPath+'/scripts/manage.mjs'));\nawait main(process.argv.slice(2)).catch(error=>{console.error(error.message);process.exitCode=1;});\n`);
   const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
   const command = path.join(paths.root, 'bridge');
   await fs.writeFile(command, `#!/bin/sh\nexec ${quote(await nodeExecutable())} ${quote(runner)} "$@"\n`, { mode: 0o700 });
