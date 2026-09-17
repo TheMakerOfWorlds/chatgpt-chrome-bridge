@@ -1,20 +1,18 @@
 # ChatGPT Chrome Bridge
 
-This Codex plugin gives Codex a persistent, context-isolated account-backed ChatGPT worker for deep reasoning, research, exploration, critique, synthesis, complex comparison, planning, explicit file analysis, deliberately authorized sanitized repository snapshots, generated artifacts, second opinions, and exact-thread follow-ups.
+**Give this repository link to Codex and ask it to set up the bridge on your Mac.** Codex can guide the installation, help you connect your own ChatGPT account, check for Pro, and ask where new chats should go. No API key or manual configuration editing is needed.
 
-ChatGPT receives only the submitted prompt plus the exact files intentionally listed as attachments. It cannot see the Codex conversation, active project or repository, unlisted files, code, terminal output, local UI, private workspace state, or other agents. The configured website project is an organizational destination for new conversations, not a connection to the active Codex project. Every delegated assignment must stand on its own.
-
-The bridge uses your own Chrome profile and ChatGPT account in an isolated background browser. **macOS only** (Apple Silicon and Intel), with Google Chrome, Node.js 20+, and Codex. No OpenAI API key is needed.
+**For Codex and other coding agents handling setup:** follow [AGENTS.md](AGENTS.md) and the [Codex setup guide](docs/CODEX_SETUP.md). Check prerequisites and do the installation work for the user; ask them only for their account/project choices and any sign-in or OS approval that requires their participation.
 
 ## Install and connect
 
 **Easiest: ask Codex to set it up.** Paste this into a Codex task:
 
-> Install the ChatGPT Chrome Bridge from https://github.com/TheMakerOfWorlds/chatgpt-chrome-bridge. Read its AGENTS.md and docs/INSTALL.md, help me connect my own ChatGPT account, and ask whether I want new chats in no project or in a project I choose.
+> Install the ChatGPT Chrome Bridge from https://github.com/TheMakerOfWorlds/chatgpt-chrome-bridge. Read its AGENTS.md and docs/INSTALL.md, help me connect my own paid ChatGPT account and check for Pro access, and ask whether I want new chats in no project or in a project I choose.
 
-Codex will help with prerequisites, account selection, login, and the project preference. This is an unofficial community project; it uses your own ChatGPT website session.
+Codex will check/install prerequisites, ask which account has your paid plan, check the available Pro option, and ask **no project or a project you choose**. You do not need to run Terminal commands yourself when Codex is handling setup. This is an unofficial community project; it uses your own ChatGPT website session.
 
-For manual setup, download this repository with **Code → Download ZIP**, extract it, and open **Setup.command**. The installer checks prerequisites, downloads the latest stable release, asks which Chrome profile to use, and verifies ChatGPT login. If sign-in is needed, finish it in the dedicated Chrome window, quit that instance with Command-Q, and press Return in the installer. It then asks where new chats should go: **no project**, or a ChatGPT project URL from your account. Start a new Codex task when setup finishes.
+For manual setup, download this repository with **Code → Download ZIP**, extract it, and open **Setup.command**. The installer checks prerequisites, downloads the latest stable release, asks which Chrome profile has your paid ChatGPT account, verifies login, and checks for Pro. If Pro is missing, you must choose another account or explicitly continue with the available options. If sign-in is needed, finish it in the dedicated Chrome window, quit that instance with Command-Q, and press Return in the installer. It then asks where new chats should go: **no project**, or a ChatGPT project URL from your account. Start a new Codex task when setup finishes.
 
 Or use Terminal:
 
@@ -31,6 +29,14 @@ Automatic stable-release updates are enabled by default. The bridge checks GitHu
 New users choose their own Chrome profile and project preference; **no project** is the default. Existing settings are preserved unless you choose a change. You can later ask Codex to change or clear the default project. Prompts begin directly with the task itself, without a generic worker-role preamble.
 
 The ChatGPT bridge uses the website's current/default model, including **GPT-6** through the website's **Latest** selection. It does not pin GPT-5.6 or expose model switching to Codex. It only controls thinking effort. The default effort is **Extra High**; omit the per-request `reasoning` argument to select it automatically, or pass another currently visible effort for a one-off override. The adapter discovers the compact **Power** slider dynamically, including composer labels with a model badge such as **6 Pro**, and retains compatibility with **Advanced → Effort** menus. Syncing or changing effort preserves the selected model.
+
+## What the bridge does
+
+This Codex plugin gives Codex a persistent, context-isolated account-backed ChatGPT worker for deep reasoning, research, exploration, critique, synthesis, complex comparison, planning, explicit file analysis, deliberately authorized sanitized repository snapshots, generated artifacts, second opinions, and exact-thread follow-ups.
+
+ChatGPT receives only the submitted prompt plus the exact files intentionally listed as attachments. It cannot see the Codex conversation, active project or repository, unlisted files, code, terminal output, local UI, private workspace state, or other agents. The configured website project is an organizational destination for new conversations, not a connection to the active Codex project. Every delegated assignment must stand on its own.
+
+The bridge uses your own Chrome profile and ChatGPT account in an isolated background browser. **macOS only** (Apple Silicon and Intel), with Google Chrome, Node.js 20+, and Codex. No OpenAI API key is needed.
 
 ## Compact status and diagnostics
 

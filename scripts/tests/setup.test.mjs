@@ -75,3 +75,28 @@ test('invalid and conflicting project choices cannot overwrite saved settings',a
   assert.throws(()=>parseArgs(['install','--project-url','bad']),/Invalid ChatGPT project/);
   assert.equal(parseArgs(['project','--no-project'])['no-project'],true);
 });
+
+test('setup reports Pro discovery without treating a model badge as the subscription name',async t=>{
+  const paths=await fixture(t);
+  const actual=await setupLogin({paths,profile:'Profile 1',interactive:false,createBridge:async()=>({syncOptions:async()=>({authenticated:true,reasoningOptions:['High','6 Pro']}),closeBrowser:async()=>{}})});
+  assert.equal(actual.proAvailable,true);assert.equal(actual.continuedWithoutPro,false);
+});
+test('missing Pro requires a choice and does not reopen login for an authenticated account',async t=>{
+  const paths=await fixture(t);let closed=0,opened=0;
+  await assert.rejects(setupLogin({paths,profile:'Profile 1',interactive:false,createBridge:async()=>({syncOptions:async()=>({authenticated:true,reasoningOptions:['High','Upgrade to Pro']}),openForLogin:async()=>{opened++;},closeBrowser:async()=>{closed++;}})}),error=>error.code==='PRO_UNAVAILABLE');
+  assert.equal(opened,0);assert.equal(closed,1);
+});
+test('only an explicit yes or allow-no-pro accepts an account without Pro',async t=>{
+  const paths=await fixture(t);const createBridge=async()=>({syncOptions:async()=>({authenticated:true,reasoningOptions:['High']}),closeBrowser:async()=>{}});
+  await assert.rejects(setupLogin({paths,profile:'Profile 1',prompt:async()=>'',createBridge}),error=>error.code==='PRO_UNAVAILABLE');
+  const accepted=await setupLogin({paths,profile:'Profile 1',prompt:async()=> 'yes',createBridge});
+  assert.equal(accepted.proAvailable,false);assert.equal(accepted.continuedWithoutPro,true);
+  const flag=await setupLogin({paths,profile:'Profile 1',interactive:false,allowNoPro:true,createBridge});
+  assert.equal(flag.continuedWithoutPro,true);
+  assert.equal(parseArgs(['install','--allow-no-pro'])['allow-no-pro'],true);
+});
+test('a missing Pro choice after interactive login does not trigger repeated login attempts',async t=>{
+  const paths=await fixture(t);let attempts=0,opened=0;
+  await assert.rejects(setupLogin({paths,profile:'Profile 1',prompt:async()=>'',createBridge:async()=>({syncOptions:async()=>{if(attempts++===0)throw new Error('Not signed in');return {authenticated:true,reasoningOptions:['High']};},openForLogin:async()=>{opened++;},closeBrowser:async()=>{}})}),error=>error.code==='PRO_UNAVAILABLE');
+  assert.equal(attempts,2);assert.equal(opened,1);
+});

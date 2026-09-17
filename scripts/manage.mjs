@@ -9,7 +9,7 @@ import { installationPaths, updateInstallation, rollbackInstallation, prepareRel
 
 export function parseArgs(args) {
   const result = { command: args[0] || 'help' };
-  const booleans = new Set(['skip-login', 'manual-updates', 'json', 'no-project']);
+  const booleans = new Set(['skip-login', 'manual-updates', 'json', 'no-project', 'allow-no-pro']);
   const values = new Set(['profile', 'project-url', 'from-bundle', 'manifest', 'codex']);
   for (let i = 1; i < args.length; i++) {
     if (!args[i].startsWith('--')) throw new Error(`Unexpected argument: ${args[i]}`);
@@ -23,7 +23,7 @@ export function parseArgs(args) {
   return result;
 }
 
-export async function setupLogin({ profile: requested, interactive = process.stdin.isTTY, paths = bridgePaths(), prompt, createBridge } = {}) {
+export async function setupLogin({ profile: requested, allowNoPro = false, interactive = process.stdin.isTTY, paths = bridgePaths(), prompt, createBridge } = {}) {
   let reader;
   const ask = prompt || (async question => {
     if (!interactive) throw new Error('Choose a profile with --profile, or run setup in Terminal.');
@@ -33,6 +33,23 @@ export async function setupLogin({ profile: requested, interactive = process.std
   let bridge;
   try {
     const config = await loadConfig(paths);
+    console.log('Use your own ChatGPT account with the paid plan and Pro access you intend to use. A Chrome profile name does not prove which ChatGPT account is signed in.');
+    const confirmCapabilities = async synced => {
+      const proAvailable = (synced.reasoningOptions || []).some(label => /^(?:(?:GPT[- ]?)?\d+(?:\.\d+)?\s+)?Pro$/i.test(String(label).trim()));
+      console.log(`Available ChatGPT effort: ${(synced.reasoningOptions || []).join(', ') || 'none discovered'}.`);
+      if (!proAvailable && !allowNoPro) {
+        console.log('Pro was not found in this session. Choose the Chrome profile/account that has your plan, or explicitly continue with the options shown.');
+        const accepted = (interactive || prompt) && /^(y|yes)$/i.test((await ask('Continue without Pro? [y/N]: ')).trim());
+        if (!accepted) {
+          const error = new Error('Setup needs a Pro-capable account or an explicit choice to continue without Pro. Run login --profile "YOUR PROFILE" to check another account, or login --allow-no-pro to accept the available options.');
+          error.code = 'PRO_UNAVAILABLE';
+          throw error;
+        }
+      }
+      console.log(proAvailable ? 'Pro option found in this ChatGPT session.' : 'Continuing without Pro by explicit choice.');
+      console.log('Subscription billing was not inspected; available options reflect this session.');
+      return { ...synced, proAvailable, continuedWithoutPro: !proAvailable };
+    };
     let profiles;
     try { profiles = await listChromeProfiles(paths); }
     catch { throw new Error('Open Google Chrome once to create a profile, then run setup again.'); }
@@ -40,7 +57,7 @@ export async function setupLogin({ profile: requested, interactive = process.std
     if (requested || config.profile) selected = await resolveChromeProfile(requested, paths, config.profile);
     else if (profiles.length === 1) selected = profiles[0];
     else {
-      console.log('Choose the Chrome profile to use for ChatGPT:');
+      console.log('Choose the Chrome profile containing your paid ChatGPT account with Pro access:');
       profiles.forEach((profile, i) => console.log(`  ${i + 1}. ${profile.name} (${profile.directory})`));
       const answer = await ask('Profile number: ');
       if (!/^[1-9]\d*$/.test(answer.trim()) || !profiles[Number(answer) - 1]) throw new Error('Select one of the listed profile numbers.');
@@ -56,25 +73,24 @@ export async function setupLogin({ profile: requested, interactive = process.std
     try {
       const synced = await bridge.syncOptions({ profile: selected.directory, forceRescan: true });
       if (!synced.authenticated) throw new Error('ChatGPT sign-in required.');
-      console.log(`Connected to ChatGPT. Available effort: ${synced.reasoningOptions.join(', ')}.`);
-      return synced;
+      return await confirmCapabilities(synced);
     } catch (error) {
       // Only authentication errors should open login; a UI/network failure needs
       // its real error, not an unnecessary account sign-in.
+      if (error.code === 'PRO_UNAVAILABLE') throw error;
       if (!/sign(?:ed)?.?in|signed.?out|logged.?out|login|authenticated/i.test(error.message)) throw error;
       if (!interactive && !prompt) throw new Error('ChatGPT sign-in is needed. Run the login command in Terminal to finish in Chrome.');
       await bridge.openForLogin({ profile: selected.directory });
-      console.log('Sign in to ChatGPT in the dedicated Chrome window. No API key is needed.');
+      console.log('Sign in with your own paid ChatGPT account that has Pro access. No API key is needed.');
       console.log('Then quit that dedicated Chrome instance completely with Command-Q.');
       for (let attempt = 0; attempt < 3; attempt++) {
         await ask('Press Return after signing in and quitting the dedicated Chrome window: ');
         try {
           const synced = await bridge.syncOptions({ profile: selected.directory, forceRescan: true });
           if (!synced.authenticated) throw new Error('ChatGPT still needs sign-in.');
-          console.log('ChatGPT login verified. Setup is complete.');
-          return synced;
+          return await confirmCapabilities(synced);
         } catch (error) {
-          if (attempt === 2) throw error;
+          if (error.code === 'PRO_UNAVAILABLE' || attempt === 2) throw error;
           console.log(`Not connected yet: ${error.message}`);
         }
       }
@@ -118,7 +134,7 @@ export async function main(args = process.argv.slice(2)) {
   const options = parseArgs(args), paths = installationPaths();
   const output = value => console.log(JSON.stringify(value, null, 2));
   if (options.command === 'help' || options.command === '--help') {
-    console.log('ChatGPT Bridge: install | login | project | doctor | check | update | rollback | auto-on | auto-off\nInstall options: --skip-login --profile "Profile 1" --manual-updates --codex /path/to/codex\nProject preference: --no-project or --project-url https://chatgpt.com/g/g-p-.../project\nFor an offline release: --from-bundle bridge.bundle.json.gz --manifest release.json');
+    console.log('ChatGPT Bridge: install | login | project | doctor | check | update | rollback | auto-on | auto-off\nInstall options: --skip-login --profile "Profile 1" --manual-updates --allow-no-pro --codex /path/to/codex\nProject preference: --no-project or --project-url https://chatgpt.com/g/g-p-.../project\nFor an offline release: --from-bundle bridge.bundle.json.gz --manifest release.json');
     return;
   }
   if (process.platform !== 'darwin' && !['check','doctor'].includes(options.command)) throw new Error('This release supports macOS with Google Chrome. Windows and Linux are not yet supported.');
@@ -147,14 +163,14 @@ export async function main(args = process.argv.slice(2)) {
     console.log(`Installed v${installed.currentVersion}. Maintenance command: ${command}`);
     const managed = await import(pathToFileURL(path.join(installed.currentPath, 'scripts/manage.mjs')));
     if (!options['skip-login']) {
-      await managed.setupLogin({ profile: options.profile });
+      await managed.setupLogin({ profile: options.profile, allowNoPro: options['allow-no-pro'] });
     }
     await managed.setupProject({ projectUrl: options['project-url'], noProject: options['no-project'] });
     console.log('Start a new Codex task and ask: "Use ChatGPT to help me with this."');
     return installed;
   }
   if (options.command === 'project') return setupProject({ projectUrl: options['project-url'], noProject: options['no-project'] });
-  if (options.command === 'login') return setupLogin({ profile: options.profile });
+  if (options.command === 'login') return setupLogin({ profile: options.profile, allowNoPro: options['allow-no-pro'] });
   if (options.command === 'doctor') {
     const state = await readJson(paths.state, {});
     let chrome = false; try { await fs.access(bridgePaths().chromeExecutable); chrome = true; } catch {}

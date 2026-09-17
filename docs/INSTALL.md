@@ -20,13 +20,21 @@ No GitHub login is required to download this public repository or its releases. 
    sh install.sh
    ```
 
-4. Choose your Chrome profile when prompted. The installer first checks whether its isolated session is already signed in. If needed, it opens a dedicated Chrome window for normal ChatGPT login. Complete login yourself, including any MFA, then quit that dedicated Chrome instance with **Command-Q** and press Return in Terminal. The installer verifies the login and available effort settings.
+4. Choose the Chrome profile containing **your own paid ChatGPT account with Pro access**. A profile label alone does not identify the ChatGPT account inside it. The installer first checks whether its isolated session is already signed in. If needed, it opens a dedicated Chrome window for normal ChatGPT login. Complete login yourself, including any MFA, then quit that dedicated Chrome instance with **Command-Q** and press Return in Terminal. The installer verifies login, lists the available efforts, and reports whether Pro was found. If Pro is missing, choose the correct account or explicitly accept continuing without Pro.
 5. Choose where new chats should go. Press Return for **no project** on a fresh install, or paste a project URL from your own ChatGPT account. On a reinstall, Return keeps your existing destination; type `none` to clear it.
 6. Start a **new Codex task** and say: “Use ChatGPT to help me with this.”
 
 The installer downloads the latest stable GitHub release, installs locked dependencies, registers its own Codex marketplace, and enables automatic updates. Your existing profile, project destination, and login settings are preserved on subsequent runs. New users are asked for a destination, with no project as the default. Codex-led setup asks in the conversation and passes that choice to the installer.
 
 For a private fork, only invited GitHub users can download it; run `gh auth login` with an authorized GitHub account first. ChatGPT sign-in and GitHub access are separate.
+
+## Choose the account with your plan
+
+During Codex-led setup, Codex asks which of your accounts has your paid ChatGPT plan and Pro access, then checks the options visible in that signed-in session. This does not inspect billing or guarantee future availability. If Pro is missing, setup does not silently mark it ready or purchase a plan.
+
+To check another account, use the printed maintenance command with `login --profile 'Profile 2'` (replace the example with your chosen local profile). If the same profile contains a different ChatGPT account, use the dedicated login window to choose the intended account, quit it with Command-Q, and run the login check again. You can explicitly accept the available options using the interactive **Continue without Pro?** question, or `--allow-no-pro` on `install`/`login`. Codex must ask before using that flag. This does not change your configured default effort; use a supported effort if your account lacks the current default.
+
+`--skip-login` deliberately skips login and Pro discovery for unattended installs; finish with the login command before claiming the account is ready.
 
 ## Choose or change the default project
 
