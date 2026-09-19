@@ -24,7 +24,7 @@ export function buildMacOpenArguments({
   return [
     "-W",
     "-n",
-    ...(background ? ["-g"] : []),
+    ...(background ? ["-g", "-j"] : []),
     "-a",
     applicationPath,
     "--args",

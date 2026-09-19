@@ -36,6 +36,6 @@ For first setup, ask which of the installer's own ChatGPT accounts has their pai
 
 Save with `configure_chatgpt_bridge`: `project_url: ""` clears the destination; a project URL sets it. Read back status to verify. Before plugin tools are loaded, follow the packaged `docs/CODEX_SETUP.md` and `docs/INSTALL.md` via the plugin root; the installer accepts `--no-project` or `--project-url URL`. Existing preferences survive updates. Do not repeat the setup question during ordinary jobs or automatic updates.
 
-When signed out, call `open_chatgpt_for_login`; the user signs in/MFA and quits that dedicated Chrome instance with Command-Q before `sync_chatgpt_options`. A public guest composer is not authenticated. Use `force_rescan: true` for stale effort controls. The legacy `headless` setting means off-screen background Chrome, not true windowless Chrome.
+When signed out, call `open_chatgpt_for_login`; the user signs in/MFA and quits that dedicated Chrome instance with Command-Q before `sync_chatgpt_options`. A public guest composer is not authenticated. Use `force_rescan: true` for stale effort controls. The legacy `headless` setting means hidden background Chrome, not true windowless Chrome.
 
 Managed installs check stable GitHub releases automatically. Use `check_chatgpt_bridge_updates` or `update_chatgpt_bridge` when requested. New Codex tasks load updates; keep active jobs running. Read the installation guide for manual updates or rollback.

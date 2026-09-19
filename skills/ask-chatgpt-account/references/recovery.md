@@ -37,7 +37,7 @@ Use when exact-chat continuation, completion, login, or browser state is uncerta
 - Call `refresh_login_from_chrome` only when refreshing the private automation session from regular Chrome is necessary or requested. It restarts the bridge browser.
 - Call `sync_chatgpt_options` to expand ChatGPT's Advanced menu when needed and refresh the visible thinking-effort labels. Model choices are intentionally not exposed or changed.
 - On a stale-selector failure, call `sync_chatgpt_options` once with `force_rescan: true` to discard cached UI signatures and rediscover controls.
-- The legacy `headless` preference means a normal Chrome window placed off-screen, not true windowless Chrome. Use true for background or false for visible operation; normal visible Chrome is required for interactive login. True headless experiments are currently blocked by the website browser check.
+- The legacy `headless` preference means a normal Chrome instance kept hidden, not true windowless Chrome. Use true for background or false for visible operation; normal visible Chrome is required for interactive login. True headless experiments are currently blocked by the website browser check.
 - Call `get_chatgpt_bridge_status` for diagnostics.
 - `get_chatgpt_bridge_status.browserLifecycle` reports active browser operations, whether an idle close is scheduled, its due time, and the most recent close error. A browser that remains open while `activeOperations` is nonzero is expected; when the queue and recovery operations are idle it closes automatically.
 

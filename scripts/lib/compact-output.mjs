@@ -41,6 +41,7 @@ export function compactBridgeStatus(status) {
   const warnings = {};
   const errors = {
     browserClose: status.browserLifecycle?.lastCloseError,
+    backgroundVisibility: status.backgroundVisibility?.error,
     cacheCleanup: status.browserCache?.lastCleanupError,
     retentionCleanup: status.localRetention?.lastInspectionCleanupError,
   };

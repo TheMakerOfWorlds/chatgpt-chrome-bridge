@@ -1,3 +1,4 @@
+import { startBackgroundVisibilityGuard, unhideBridgeApplication } from "./background-visibility.mjs";
 import { BROWSER_CACHE_POLICY } from "./profile-cache.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -97,6 +98,8 @@ export class ChatGptChromeBridge {
     this.profile = null;
     this.runtimeHeadless = null;
     this.browserWindowVisible = false;
+    this.backgroundVisibilityGuard = null;
+    this.backgroundVisibilityError = null;
     this.workerAuthenticated = false;
     this.cache = {};
     this.liveJobPages = new Map();
@@ -309,13 +312,14 @@ export class ChatGptChromeBridge {
     }
     // Cloudflare-protected account sites can challenge true headless Chrome.
     // Keep "headless" as the user-facing background preference, but implement
-    // it with a real headful window positioned off-screen.
+    // it with a real Chrome instance kept hidden by a PID-scoped guard.
     const headless = visible ? false : Boolean(this.config.headless);
     const reusable =
       this.context &&
       this.profile?.directory === resolved.directory &&
       this.runtimeHeadless === headless;
     if (reusable) {
+      if (headless) await this.startVisibilityGuard();
       if (!this.page || this.page.isClosed()) this.page = await this.context.newPage();
       return { context: this.context, page: this.page, profile: resolved };
     }
@@ -378,6 +382,11 @@ export class ChatGptChromeBridge {
       }
       this.profile = resolved;
       this.runtimeHeadless = headless;
+      this.browserWindowVisible = !headless;
+      if (headless) {
+        try { await this.startVisibilityGuard(); }
+        catch (error) { await this.closeBrowser().catch(() => {}); throw error; }
+      }
       const pages = this.context.pages();
       this.page =
         pages.find((page) => this.isAllowedServiceUrl(page.url())) ||
@@ -1220,6 +1229,26 @@ export class ChatGptChromeBridge {
     }
   }
 
+  async startVisibilityGuard() {
+    if (this.backgroundVisibilityGuard) return;
+    this.backgroundVisibilityError = null;
+    try {
+      this.backgroundVisibilityGuard = await startBackgroundVisibilityGuard(this.browserProcess.pid, {
+        onError: error => { this.backgroundVisibilityError = error.message; this.backgroundVisibilityGuard = null; },
+      });
+      this.browserWindowVisible = false;
+    } catch (error) {
+      this.backgroundVisibilityError = error.message;
+      throw error;
+    }
+  }
+
+  async stopVisibilityGuard() {
+    const guard = this.backgroundVisibilityGuard;
+    this.backgroundVisibilityGuard = null;
+    if (guard) await guard.stop();
+  }
+
   async setBrowserWindowVisibility(page, visibility = "unchanged") {
     if (visibility === "unchanged") {
       return { visibility, changed: false, visible: this.browserWindowVisible };
@@ -1227,19 +1256,16 @@ export class ChatGptChromeBridge {
     if (!["visible", "background"].includes(visibility)) {
       throw new Error(`Unknown browser visibility mode: ${visibility}`);
     }
+    if (visibility === "background") {
+      await this.startVisibilityGuard();
+      return { visibility, changed: true, visible: false };
+    }
+    await this.stopVisibilityGuard();
+    if (this.browserProcess?.pid) await unhideBridgeApplication(this.browserProcess.pid);
     const session = await page.context().newCDPSession(page);
     try {
       const { windowId } = await session.send("Browser.getWindowForTarget");
-      const bounds =
-        visibility === "visible"
-          ? { left: 80, top: 80, width: 1440, height: 1000, windowState: "normal" }
-          : {
-              left: -32_000,
-              top: -32_000,
-              width: 1440,
-              height: 1000,
-              windowState: "normal",
-            };
+      const bounds = { left: 80, top: 80, width: 1440, height: 1000, windowState: "normal" };
       await session.send("Browser.setWindowBounds", { windowId, bounds });
       if (visibility === "visible") await page.bringToFront();
       this.browserWindowVisible = visibility === "visible";
@@ -1374,6 +1400,7 @@ export class ChatGptChromeBridge {
       config: this.publicConfig(),
       workerId: this.workerId,
       browserRunning: Boolean(this.context),
+      backgroundVisibility: { guarded: Boolean(this.backgroundVisibilityGuard), error: this.backgroundVisibilityError },
       openPages: this.context
         ? this.context.pages().filter((page) => !page.isClosed()).length
         : 0,
@@ -1448,6 +1475,7 @@ export class ChatGptChromeBridge {
   }
 
   async performCloseBrowser() {
+    await this.stopVisibilityGuard();
     const browser = this.browserConnection;
     const browserProcess = this.browserProcess;
     const context = this.context;

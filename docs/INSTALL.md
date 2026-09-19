@@ -98,6 +98,9 @@ The bridge maintains small disposable browser caches automatically. Saved output
 
 ## Browser window preference
 
-The supported default is **background**: a normal Chrome window is positioned off-screen so the worker does not take focus. Ask Codex to configure the bridge for background operation (`headless: true`, the legacy parameter name) or visible operation (`headless: false`). Login always opens an ordinary visible Chrome window.
+The supported default is **background**: a normal Chrome instance launches hidden and a local guard keeps only that bridge process hidden. Ask Codex to configure the bridge for background operation (`headless: true`, the legacy parameter name) or visible operation (`headless: false`). Login always opens an ordinary visible Chrome window.
 
 That legacy parameter does not mean true windowless Chrome. A September 16, 2026 experiment using `--headless=new` on both Macs repeatedly stopped at ChatGPT's browser-check page, while normal background Chrome authenticated successfully. True headless mode is not offered as a working preference in this release. No hidden fallback changes a requested windowless mode into a visible browser.
+
+
+On macOS, Chrome can ignore off-screen coordinates and reveal itself when creating a tab. Background mode therefore also uses a small native visibility helper, scoped to the bridge Chrome process ID, to re-hide that instance when needed. It stops when the browser closes or you request visible inspection. Login remains visible. This uses normal Chrome, not true headless mode; an OS window transition may still briefly appear. Detailed bridge status reports guard failures rather than claiming background control succeeded.

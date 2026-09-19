@@ -34,14 +34,15 @@ test("background Chrome uses LaunchServices without taking foreground focus", ()
     background: true,
     chromeArguments,
   });
-  assert.deepEqual(openArguments.slice(0, 5), [
+  assert.deepEqual(openArguments.slice(0, 6), [
     "-W",
     "-n",
     "-g",
+    "-j",
     "-a",
     "/Applications/Google Chrome.app",
   ]);
-  assert.deepEqual(openArguments.slice(5), ["--args", ...chromeArguments]);
+  assert.deepEqual(openArguments.slice(6), ["--args", ...chromeArguments]);
 });
 
 test("visible Chrome launch intentionally omits the no-focus flag", () => {
