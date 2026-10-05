@@ -8,6 +8,7 @@ import { chromium } from "playwright-core";
 
 import {
   authenticationStatus,
+  assistantMessages,
   collectResponseFiles,
   conversationReplyState,
   discoverResponseFileCandidates,
@@ -24,6 +25,85 @@ import {
 const chromeExecutable =
   process.env.CHATGPT_CHROME_EXECUTABLE ||
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+// Reduced from the signed-in website's October 2026 markup. The search-unit
+// wrapper contains content; response actions sit outside it, alongside the user
+// turn. The model picker and saved-response loading button are unrelated UI.
+const currentConversationFixture = `
+  <main>
+    <div id="messages">
+      <div class="group flex flex-col">
+        <div class="flex flex-col gap-3">
+          <div data-chatgpt-search-unit-key="fallback-turn-0:0:user"><div data-content-search-unit-key="fallback-turn-0:0:user">Initial question</div></div>
+          <div><div data-content-search-unit-key="fallback-turn-0:2:assistant" data-chatgpt-search-unit-key="fallback-turn-0:2:assistant">
+            <h4 data-conversation-role="assistant">ChatGPT said:</h4>
+            <div data-markdown-text-style="assistant-message"><p>Completed answer.</p><a href="https://chatgpt.com/backend-api/files/current.csv" download="current.csv">current.csv</a></div>
+          </div></div>
+        </div>
+        <div class="turn-action-controls"><button aria-label="Copy"></button><button aria-label="Loading saved responses…" aria-busy="true" disabled></button><button aria-label="Read aloud"></button></div>
+      </div>
+    </div>
+    <form><div id="prompt-textarea" role="textbox" contenteditable="true"></div>
+      <button aria-label="Select ChatGPT model" aria-haspopup="menu" data-composer-navigation-target="reasoning" data-selected-reasoning-effort="max">Thinking effort<span>Extra High</span></button>
+    </form>
+  </main>`;
+
+test("reads current ChatGPT content and ignores thinking settings and saved-response loading", async t => {
+  const browser = await chromium.launch({executablePath: chromeExecutable, headless: true});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(currentConversationFixture);
+  const messages = await assistantMessages(page);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].text, "Completed answer.\n\ncurrent.csv");
+  assert.equal(messages[0].terminal, true);
+  assert.equal(messages[0].signal, "aria-label:Copy");
+  const response = await waitForAssistantResponse(page, {beforeCount: 0, beforeLast: ""}, {timeoutMs: 5_000});
+  assert.equal(response.text, messages[0].text);
+  const reply = await waitForConversationReplyReadiness(page, {timeoutMs: 3_000});
+  assert.equal(reply.ready, true);
+  const files = await discoverResponseFileCandidates(page);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].suggestedName, "current.csv");
+  await page.evaluate(() => {
+    const user = document.createElement("div");
+    user.dataset.chatgptSearchUnitKey = "fallback-turn-1:0:user";
+    user.textContent = "A new question is waiting for an answer";
+    document.querySelector("#messages").append(user);
+  });
+  assert.equal((await conversationReplyState(page)).reason, "latest-turn-not-assistant");
+});
+
+test("current streaming content cannot inherit completion or files from an older turn", async t => {
+  const browser = await chromium.launch({executablePath: chromeExecutable, headless: true});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(currentConversationFixture);
+  await page.evaluate(() => {
+    const turn = document.createElement("div");
+    turn.id = "new-turn";
+    turn.innerHTML = '<div data-chatgpt-search-unit-key="fallback-turn-1:2:assistant"><h4 data-conversation-role="assistant">ChatGPT said:</h4><div data-markdown-text-style="assistant-message">Partial newer answer.</div></div><div role="status" aria-live="polite">Thinking…</div>';
+    document.querySelector("#messages").append(turn);
+  });
+  const partial = (await assistantMessages(page)).at(-1);
+  assert.equal(partial.terminal, false);
+  assert.deepEqual(await discoverResponseFileCandidates(page), []);
+  assert.equal((await conversationReplyState(page)).ready, false);
+  await page.evaluate(() => {
+    setTimeout(() => {
+      const turn = document.querySelector("#new-turn");
+      turn.querySelector('[role="status"]').remove();
+      turn.querySelector('[data-markdown-text-style]').textContent = "Final newer answer.";
+      const controls = document.createElement("div");
+      controls.className = "turn-action-controls";
+      controls.innerHTML = '<button aria-label="Copy"></button>';
+      turn.append(controls);
+    }, 400);
+  });
+  const response = await waitForAssistantResponse(page, {beforeCount: 1, beforeLast: "Completed answer.\n\ncurrent.csv"}, {timeoutMs: 5_000});
+  assert.equal(response.text, "Final newer answer.");
+  assert.equal(response.completionSignal, "aria-label:Copy");
+});
 
 const fixtureHtml = `<!doctype html>
 <html>

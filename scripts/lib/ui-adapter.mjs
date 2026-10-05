@@ -86,6 +86,7 @@ const ASSISTANT_SELECTORS = [
   '[data-message-author-role="assistant"]',
   '[data-testid^="conversation-turn-"]:has([data-message-author-role="assistant"]) [data-message-author-role="assistant"]',
   'article[data-turn="assistant"]',
+  '[data-chatgpt-bridge-role="assistant"]',
 ];
 
 const ACTIVE_RESPONSE_SELECTORS = [
@@ -101,7 +102,7 @@ const ACTIVE_RESPONSE_SELECTORS = [
   '[data-testid*="task" i][data-status="running"]',
   '[data-testid*="research" i][data-state="running"]',
   '[data-testid*="research" i][data-status="running"]',
-  'main [aria-busy="true"]',
+  'main [role="status"][aria-busy="true"]',
   'main [role="progressbar"]',
 ];
 
@@ -775,7 +776,42 @@ export async function setComposerText(page, prompt) {
   return composer;
 }
 
+// Current ChatGPT uses search-unit metadata for authored content rather than
+// data-message-author-role. Normalize only those explicit roles, and keep turn
+// controls scoped to one assistant response so an older answer cannot complete
+// a newer response.
+async function markCurrentConversationTurns(page) {
+  await page.evaluate(() => {
+    const main = document.querySelector("main") || document;
+    main.querySelectorAll('[data-chatgpt-bridge-turn]').forEach(element => element.removeAttribute("data-chatgpt-bridge-turn"));
+    const selector = '[data-chatgpt-search-unit-key$=":assistant"], [data-content-search-unit-key$=":assistant"], [data-chatgpt-search-unit-key$=":user"], [data-content-search-unit-key$=":user"]';
+    for (const content of main.querySelectorAll(selector)) {
+      const key = content.getAttribute("data-chatgpt-search-unit-key") || content.getAttribute("data-content-search-unit-key");
+      const role = key?.match(/:(assistant|user)$/)?.[1];
+      if (!role) continue;
+      const parentContent = content.parentElement?.closest(selector);
+      const parentKey = parentContent?.getAttribute("data-chatgpt-search-unit-key") || parentContent?.getAttribute("data-content-search-unit-key");
+      if (parentKey === key) continue;
+      content.setAttribute("data-chatgpt-bridge-role", role);
+      if (role !== "assistant") continue;
+      let turn = content;
+      for (let candidate = content.parentElement; candidate && candidate !== main; candidate = candidate.parentElement) {
+        const responseKeys = new Set(Array.from(candidate.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"], [data-content-search-unit-key$=":assistant"]')).map(element => element.getAttribute("data-chatgpt-search-unit-key") || element.getAttribute("data-content-search-unit-key")));
+        if (responseKeys.size > 1) break;
+        const controls = candidate.querySelectorAll('.turn-action-controls button, .turn-action-controls [role="button"]');
+        if (Array.from(controls).some(control => /^(?:copy|copy response|read aloud|regenerate(?: response)?|good response|bad response)$/i.test(control.getAttribute("aria-label") || ""))) {
+          turn = candidate;
+          break;
+        }
+      }
+      turn.setAttribute("data-chatgpt-bridge-turn", "assistant");
+      content.setAttribute("data-chatgpt-bridge-current-content", "true");
+    }
+  });
+}
+
 export async function assistantMessages(page) {
+  await markCurrentConversationTurns(page);
   for (const selector of ASSISTANT_SELECTORS) {
     try {
       const locator = page.locator(selector);
@@ -801,7 +837,7 @@ export async function assistantMessages(page) {
           };
           const turn =
             element.closest(
-              '[data-testid^="conversation-turn-"], article[data-turn], section[data-turn]',
+              '[data-testid^="conversation-turn-"], article[data-turn], section[data-turn], [data-chatgpt-bridge-turn]',
             ) || element;
           const controls = Array.from(
             turn.querySelectorAll('button, [role="button"]'),
@@ -819,6 +855,7 @@ export async function assistantMessages(page) {
               /(?:copy|share|good|bad|regenerate).*turn-action|turn-action.*(?:copy|share|good|bad|regenerate)/i.test(
                 testId,
               ) ||
+              (label === "Copy" && element.hasAttribute("data-chatgpt-bridge-current-content") && control.closest(".turn-action-controls")) ||
               /^(?:copy response|share|good response|bad response|read aloud|switch model|regenerate(?: response)?|more actions)$/i.test(
                 label,
               )
@@ -831,8 +868,16 @@ export async function assistantMessages(page) {
           }
           return { terminal: false, signal: null };
         });
+        const text = await item.evaluate(element => {
+          if (!element.hasAttribute("data-chatgpt-bridge-current-content")) return element.innerText;
+          const markdown = Array.from(element.querySelectorAll('[data-markdown-text-style="assistant-message"]'));
+          if (markdown.length) return markdown.map(block => block.innerText).join("\n\n");
+          const copy = element.cloneNode(true);
+          copy.querySelectorAll('[data-conversation-role], .turn-action-controls').forEach(node => node.remove());
+          return copy.textContent;
+        });
         messages.push({
-          text: (await item.innerText()).trim(),
+          text: (text || "").trim(),
           index,
           ...completion,
         });
@@ -862,6 +907,7 @@ function looksLikeProInterim(text) {
 }
 
 export async function discoverResponseFileCandidates(page) {
+  await markCurrentConversationTurns(page);
   const prefix = `response-file-${crypto.randomUUID()}`;
   const raw = await page.evaluate(
     ({ markerPrefix, extensionPattern }) => {
@@ -879,14 +925,14 @@ export async function discoverResponseFileCandidates(page) {
       };
       const assistants = Array.from(
         document.querySelectorAll(
-          '[data-message-author-role="assistant"], article[data-turn="assistant"]',
+          '[data-message-author-role="assistant"], article[data-turn="assistant"], [data-chatgpt-bridge-role="assistant"]',
         ),
       ).filter(visible);
       const assistant = assistants.at(-1);
       if (!assistant) return [];
       const turn =
         assistant.closest(
-          '[data-testid^="conversation-turn-"], article[data-turn], section[data-turn]',
+          '[data-testid^="conversation-turn-"], article[data-turn], section[data-turn], [data-chatgpt-bridge-turn]',
         ) || assistant;
       const extensionRegex = new RegExp(extensionPattern, "i");
       const elements = Array.from(
@@ -1019,6 +1065,7 @@ function publicResponseFileCandidate(candidate) {
 }
 
 async function responseFileUiHints(page) {
+  await markCurrentConversationTurns(page);
   const hints = await page.evaluate(({ extensionPattern }) => {
     const visible = (element) => {
       if (!(element instanceof HTMLElement)) return false;
@@ -1033,14 +1080,14 @@ async function responseFileUiHints(page) {
     };
     const assistants = Array.from(
       document.querySelectorAll(
-        '[data-message-author-role="assistant"], article[data-turn="assistant"]',
+        '[data-message-author-role="assistant"], article[data-turn="assistant"], [data-chatgpt-bridge-role="assistant"]',
       ),
     ).filter(visible);
     const assistant = assistants.at(-1);
     if (!assistant) return [];
     const turn =
       assistant.closest(
-        '[data-testid^="conversation-turn-"], article[data-turn], section[data-turn]',
+        '[data-testid^="conversation-turn-"], article[data-turn], section[data-turn], [data-chatgpt-bridge-turn]',
       ) || assistant;
     const extensionRegex = new RegExp(extensionPattern, "i");
     return Array.from(turn.querySelectorAll("*"))
@@ -1197,6 +1244,9 @@ async function activeResponseState(page) {
       ),
     ).filter(visible);
     for (const element of candidates) {
+      // Picker text such as "Thinking effort Extra High" describes a setting.
+      // It is not evidence that an assistant is generating a response.
+      if (element.closest('[aria-haspopup], [role="menu"], [data-composer-navigation-target="reasoning"], [data-selected-reasoning-effort]')) continue;
       const testId = element.getAttribute("data-testid") || "";
       const label = [
         element.getAttribute("aria-label"),
@@ -1887,7 +1937,7 @@ async function lastAuthoredConversationTurn(page) {
     const conversationRoot = document.querySelector("main") || document;
     const authored = Array.from(
       conversationRoot.querySelectorAll(
-        '[data-message-author-role="user"], [data-message-author-role="assistant"], article[data-turn="user"], article[data-turn="assistant"]',
+        '[data-message-author-role="user"], [data-message-author-role="assistant"], article[data-turn="user"], article[data-turn="assistant"], [data-chatgpt-bridge-role]',
       ),
     ).filter(visible);
     const turns = [];
@@ -1901,6 +1951,7 @@ async function lastAuthoredConversationTurn(page) {
       seen.add(turn);
       const role =
         element.getAttribute("data-message-author-role") ||
+        element.getAttribute("data-chatgpt-bridge-role") ||
         turn.getAttribute("data-turn") ||
         null;
       if (!/^(?:user|assistant)$/.test(role || "")) continue;
@@ -1917,6 +1968,7 @@ async function lastAuthoredConversationTurn(page) {
 }
 
 export async function conversationReplyState(page) {
+  await markCurrentConversationTurns(page);
   const [messages, active, lastTurn, composer] = await Promise.all([
     assistantMessages(page),
     activeResponseState(page),
