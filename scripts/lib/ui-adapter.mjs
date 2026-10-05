@@ -2259,9 +2259,10 @@ export async function waitForAuthenticationStatus(
   let status = await authenticationStatus(page);
   while (
     !status.authenticated &&
-    status.reason === "composer-not-found" &&
     Date.now() - started < timeoutMs
   ) {
+    // A fresh hidden tab can briefly render the guest shell before its saved
+    // account session hydrates. A persistent login control still fails closed.
     await page.waitForTimeout(250);
     status = await authenticationStatus(page);
   }

@@ -80,6 +80,7 @@ export class ChatGptChromeBridge {
     this.isAllowedServiceUrl = isAllowedChatGptUrl;
     this.authenticationChecker = authenticationStatus;
     this.waitAuthenticationChecker = waitForAuthenticationStatus;
+    this.conversationReplyReadinessChecker = waitForConversationReplyReadiness;
     this.uiDiagnosticsProvider = uiDiagnostics;
     this.chromeExecutableEnv = "CHATGPT_CHROME_EXECUTABLE";
     this.saveConfigProvider = saveConfig;
@@ -610,7 +611,7 @@ export class ChatGptChromeBridge {
       });
     }
     await page.waitForTimeout(500);
-    const authentication = await waitForAuthenticationStatus(page);
+    const authentication = await this.waitAuthenticationChecker(page);
     if (!authentication.authenticated) {
       if (ownedPage) await page.close().catch(() => {});
       throw new Error(
@@ -632,7 +633,25 @@ export class ChatGptChromeBridge {
           "ChatGPT did not open the exact requested conversation, so the bridge refused to send a reply.",
         );
       }
-      continuationState = await waitForConversationReplyReadiness(page);
+      continuationState = await this.conversationReplyReadinessChecker(page);
+      // A just-created conversation can load without its editor/content even
+      // though the signed-in shell was ready. Reload only before submission,
+      // only for missing UI, and revalidate identity and login every time.
+      for (let attempt = 0; attempt < 2 && !continuationState.ready; attempt += 1) {
+        if (!["composer-not-found", "assistant-response-not-hydrated"].includes(continuationState.reason)) break;
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 45_000 });
+        const reloadedUrl = normalizeConversationUrl(page.url());
+        if (conversationKeyFromUrl(reloadedUrl) !== conversationKeyFromUrl(normalizedConversationUrl)) {
+          if (ownedPage) await page.close().catch(() => {});
+          throw new Error("ChatGPT left the exact requested conversation during recovery; the bridge refused to send a reply.");
+        }
+        const reloadedAuthentication = await this.waitAuthenticationChecker(page);
+        if (!reloadedAuthentication.authenticated) {
+          if (ownedPage) await page.close().catch(() => {});
+          throw new Error("ChatGPT signed out while loading the conversation; the bridge did not submit a follow-up.");
+        }
+        continuationState = await this.conversationReplyReadinessChecker(page);
+      }
       hydration = {
         hydrated: continuationState.assistantMessageCount > 0,
         assistantMessageCount: continuationState.assistantMessageCount,

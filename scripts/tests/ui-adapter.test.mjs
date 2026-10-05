@@ -105,6 +105,20 @@ test("current streaming content cannot inherit completion or files from an older
   assert.equal(response.completionSignal, "aria-label:Copy");
 });
 
+test("waits through a transient guest shell but never accepts a persistent login control", async t => {
+  const browser = await chromium.launch({executablePath: chromeExecutable, headless: true});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent('<main><button id="login">Log in</button><div contenteditable="true" role="textbox" aria-label="Message ChatGPT">Guest composer</div></main>');
+  const signedOut = await waitForAuthenticationStatus(page,{timeoutMs:300});
+  assert.equal(signedOut.authenticated,false);
+  assert.equal(signedOut.reason,"login-control-visible");
+  await page.evaluate(() => setTimeout(() => document.querySelector('#login').remove(),400));
+  const signedIn = await waitForAuthenticationStatus(page,{timeoutMs:2000});
+  assert.equal(signedIn.authenticated,true);
+  assert.ok(signedIn.reason.includes("composer-visible"));
+});
+
 const fixtureHtml = `<!doctype html>
 <html>
   <body>
