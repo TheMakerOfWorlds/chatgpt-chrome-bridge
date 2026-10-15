@@ -14,6 +14,9 @@ export const BROWSER_CACHE_POLICY = Object.freeze({
 
 export const LIGHTWEIGHT_CHROME_ARGUMENTS = Object.freeze([
   `--disk-cache-size=${BROWSER_CACHE_POLICY.diskCacheBytes}`,
+  // Copied preferences may reference large third-party extensions. Dedicated
+  // bridge profiles only need the website session, not extension downloads.
+  "--disable-extensions",
   "--disable-features=OptimizationGuideModelDownloading,OptimizationGuideOnDeviceModel",
 ]);
 
@@ -25,6 +28,7 @@ const ROOT_CACHES = new Set([
 ]);
 const PROFILE_CACHES = new Set([
   "Cache", "Code Cache", "GPUCache", "Media Cache", "Service Worker",
+  "Extensions",
   "DawnGraphiteCache", "DawnWebGPUCache", "GraphiteDawnCache",
 ]);
 

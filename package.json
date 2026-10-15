@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-chrome-bridge",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "private": true,
   "type": "module",
   "description": "Local MCP bridge from Codex to a signed-in ChatGPT account.",
@@ -11,7 +11,7 @@
     "release:build": "node scripts/build-release.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "playwright-core": "1.61.1",
     "zod": "4.1.12"
   },

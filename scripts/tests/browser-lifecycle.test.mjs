@@ -97,3 +97,42 @@ test("graceful shutdown sends Browser.close once and serializes callers", async 
   assert.equal(bridge.context, null);
   assert.ok(bridge.lastBrowserClosedAt);
 });
+
+test("failed startup cleanup preserves the worker until Chrome is verified stopped", async () => {
+  const bridge = new ChatGptChromeBridge();
+  const runtime = { root: "/private/worker", userDataDir: "/private/worker/User Data" };
+  const failedLaunch = { userDataDir: runtime.userDataDir };
+  bridge.workerRuntime = runtime;
+  bridge.failedBrowserLaunch = failedLaunch;
+  let removed = 0;
+  bridge.profileStore.removeWorker = async value => {
+    assert.equal(value, runtime);
+    removed += 1;
+  };
+  bridge.profileStore.pruneCaches = async () => {};
+  bridge.stopNativeChrome = async () => { throw new Error("Chrome still running"); };
+
+  await assert.rejects(bridge.closeBrowser(), /Chrome still running/);
+  assert.equal(removed, 0);
+  assert.equal(bridge.workerRuntime, runtime);
+  assert.equal(bridge.failedBrowserLaunch, failedLaunch);
+
+  bridge.stopNativeChrome = async value => {
+    assert.equal(value, failedLaunch);
+    return { stopped: true };
+  };
+  await bridge.closeBrowser();
+  assert.equal(removed, 1);
+  assert.equal(bridge.workerRuntime, null);
+  assert.equal(bridge.failedBrowserLaunch, null);
+});
+
+test("startup failure without cleanup metadata cannot delete a possibly live profile", async () => {
+  const bridge = new ChatGptChromeBridge();
+  const runtime = { root: "/private/worker" };
+  bridge.workerRuntime = runtime;
+  bridge.failedBrowserLaunch = {};
+  bridge.profileStore.removeWorker = async () => { assert.fail("profile must be retained"); };
+  await assert.rejects(bridge.closeBrowser(), /no verified cleanup metadata/);
+  assert.equal(bridge.workerRuntime, runtime);
+});

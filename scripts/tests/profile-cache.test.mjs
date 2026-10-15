@@ -107,6 +107,50 @@ test("both private Chrome launch paths use the small cache budget and disable lo
   for (const build of [buildNativeControllerArguments, buildNativeLoginArguments]) {
     const args = build({ userDataDir: "/bridge/private", profileDirectory: "Profile 2", port: 9000, url: "https://chatgpt.com" });
     assert.ok(args.includes(`--disk-cache-size=${BROWSER_CACHE_POLICY.diskCacheBytes}`));
+    assert.ok(args.includes("--disable-extensions"));
     assert.ok(args.some((arg) => arg.startsWith("--disable-features=") && arg.includes("OptimizationGuideModelDownloading") && arg.includes("OptimizationGuideOnDeviceModel")));
   }
+});
+
+
+test("extension package cleanup affects only inactive bridge profiles and preserves session settings", async (t) => {
+  const { paths, store, profile, seed, put } = await fixture(t);
+  const inactive = path.join(seed.userDataDir, profile.directory);
+  const real = path.join(paths.chromeUserData, profile.directory);
+  const activeWorker = store.worker(profile, "active-extension-worker");
+  const active = path.join(activeWorker.userDataDir, profile.directory);
+  const packageFile = path.join("Extensions", "example-extension", "1.0", "large-data");
+  for (const directory of [inactive, real, active]) {
+    await put(path.join(directory, packageFile), "extension package");
+  }
+  const preserved = [
+    path.join(inactive, "Preferences"),
+    path.join(inactive, "Secure Preferences"),
+    path.join(inactive, "Local Extension Settings", "example-extension", "state"),
+    path.join(inactive, "Extension State", "state"),
+    path.join(inactive, "Local Storage", "login"),
+    path.join(inactive, "IndexedDB", "state"),
+    path.join(inactive, "Network", "Cookies"),
+  ];
+  for (const file of preserved) await put(file, "keep session");
+  await put(activeWorker.markerFile, JSON.stringify({ ownerPid: 200, createdAt: "2020-01-01T00:00:00Z" }));
+  const result = await store.pruneCaches({
+    processSnapshot: async () => [{ pid: 200, command: "node bridge" }],
+  });
+  assert.equal(result.removedCaches, 1);
+  assert.equal(result.skippedActive, 1);
+  assert.equal(await exists(path.join(inactive, "Extensions")), false);
+  assert.equal(await exists(path.join(real, packageFile)), true);
+  assert.equal(await exists(path.join(active, packageFile)), true);
+  for (const file of preserved) assert.equal(await fs.readFile(file, "utf8"), "keep session");
+
+  // A seed being used for dedicated login is protected by its browser command,
+  // even though it has no worker owner marker.
+  await put(path.join(inactive, packageFile), "active login extension");
+  const activeResult = await store.pruneCaches({ processSnapshot: async () => [
+    { pid: 201, command: `Chrome --user-data-dir=${seed.userDataDir}` },
+    { pid: 200, command: "node bridge" },
+  ] });
+  assert.equal(activeResult.removedCaches, 0);
+  assert.equal(await fs.readFile(path.join(inactive, packageFile), "utf8"), "active login extension");
 });

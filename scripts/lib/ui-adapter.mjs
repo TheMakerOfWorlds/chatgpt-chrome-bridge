@@ -591,17 +591,29 @@ async function openAdvancedPickerPath(page, kind) {
 }
 
 async function openPicker(page, kind, cachedSignature = null) {
-  const trigger = await findPickerTrigger(page, kind, cachedSignature);
-  if (!trigger) return { trigger: null, signature: null, options: [] };
-  const signature = await signatureFor(trigger.locator);
-  await trigger.locator.click({ timeout: 5_000 });
-  await page.waitForTimeout(220);
-  let options = kind === "reasoning" ? await visiblePowerSliderOptions(page) : [];
-  if (!options.length) {
-    await openAdvancedPickerPath(page, kind);
-    options = await visiblePopupOptions(page, kind);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const trigger = await findPickerTrigger(page, kind, attempt === 0 ? cachedSignature : null);
+      if (!trigger) return { trigger: null, signature: null, options: [] };
+      const signature = await signatureFor(trigger.locator);
+      await trigger.locator.click({ timeout: 5_000 });
+      await page.waitForTimeout(220);
+      let options = kind === "reasoning" ? await visiblePowerSliderOptions(page) : [];
+      if (!options.length) {
+        await openAdvancedPickerPath(page, kind);
+        options = await visiblePopupOptions(page, kind);
+      }
+      return { trigger, signature, options };
+    } catch (error) {
+      const changedWhileOpening = error.name === "TimeoutError" ||
+        /(?:detached|not attached|timeout.*exceeded)/i.test(error.message || "");
+      if (attempt === 2 || !changedWhileOpening) throw error;
+      // Hydration can move the trigger outside the selector that found it.
+      // Close partially opened menus and discover the replacement from scratch.
+      await closePicker(page);
+      await page.waitForTimeout(200);
+    }
   }
-  return { trigger, signature, options };
 }
 
 async function closePicker(page) {
@@ -2243,6 +2255,30 @@ export async function authenticationStatus(page) {
     'a:has-text("Log in")',
   ]);
   if (login) return { authenticated: false, reason: "login-control-visible" };
+  let atLoginPage = false;
+  try {
+    const url = new URL(page.url());
+    atLoginPage =
+      (url.hostname === "chatgpt.com" && /^\/auth\/(?:login|signup)(?:\/|$)/i.test(url.pathname)) ||
+      (url.hostname === "auth.openai.com" && /\/(?:login|signup)(?:\/|$)/i.test(url.pathname));
+  } catch {
+    // A blank or partially navigated tab still needs time to hydrate.
+  }
+  if (atLoginPage) {
+    // The current login page has provider buttons and an email field, without
+    // a standalone "Log in" button. Require visible auth UI as well as its URL
+    // so an unfinished redirect is not mistaken for a confirmed sign-out.
+    const authenticationForm = await firstVisible(page, [
+      'h1:has-text("Log in or sign up")',
+      'h2:has-text("Log in or sign up")',
+      '[role="heading"]:has-text("Log in or sign up")',
+      'button:has-text("Continue with Google")',
+      'button:has-text("Continue with Apple")',
+      'button:has-text("Continue with phone")',
+      'input[type="email"]',
+    ]);
+    if (authenticationForm) return { authenticated: false, reason: "login-control-visible" };
+  }
   const composer = await findComposer(page);
   if (composer) return { authenticated: true, reason: "composer-visible-without-login" };
   return {

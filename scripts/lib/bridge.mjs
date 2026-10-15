@@ -23,7 +23,7 @@ import {
   writeJsonAtomic,
 } from "./config.mjs";
 import { GlobalConversationLock } from "./conversation-lock.mjs";
-import { launchNativeControlledChrome } from "./native-controller.mjs";
+import { launchNativeControlledChrome, stopNativeControlledChrome } from "./native-controller.mjs";
 import { launchNativeLogin } from "./native-login.mjs";
 import { GlobalSubmissionPacer } from "./submission-pacer.mjs";
 import {
@@ -93,6 +93,8 @@ export class ChatGptChromeBridge {
     this.browserStartPromise = null;
     this.browserClosePromise = null;
     this.browserConnection = null;
+    this.stopNativeChrome = stopNativeControlledChrome;
+    this.failedBrowserLaunch = null;
     this.browserProcess = null;
     this.context = null;
     this.page = null;
@@ -363,7 +365,26 @@ export class ChatGptChromeBridge {
           throw new Error("Native Chrome did not expose its persistent browser context.");
         }
       } catch (error) {
-        if (launched?.child?.exitCode === null) launched.child.kill("SIGTERM");
+        let cleanupConfirmed = error.nativeChromeCleanupConfirmed === true;
+        let cleanupError = error.nativeChromeCleanupError || null;
+        if (launched) {
+          try {
+            await this.stopNativeChrome(launched);
+            cleanupConfirmed = true;
+          } catch (failure) {
+            cleanupError = failure.message;
+          }
+        }
+        if (!cleanupConfirmed) {
+          // Keep enough launch metadata to retry cleanup before the next start.
+          // Never delete a profile while its Chrome process may still be live.
+          this.failedBrowserLaunch = launched || error.nativeChromeLaunch || {};
+          this.browserProcess = launched?.child || error.nativeChromeLaunch?.child || null;
+          throw new Error(
+            `Chrome startup failed and its process cleanup could not be confirmed; the private worker profile was retained. ${cleanupError || error.message}`,
+            { cause: error },
+          );
+        }
         this.browserConnection = null;
         this.browserProcess = null;
         this.context = null;
@@ -424,13 +445,10 @@ export class ChatGptChromeBridge {
         ? currentAllowed
         : browser.page.url().startsWith(destination);
     if (forceNavigation || !atDestination) {
-      await browser.page.goto(destination, {
-        waitUntil: "domcontentloaded",
-        timeout: 45_000,
-      });
+      await this.navigateBeforeSubmission(browser.page, destination);
     }
     await browser.page.waitForTimeout(500);
-    const authentication = await waitForAuthenticationStatus(browser.page);
+    const authentication = await this.waitForPageAuthentication(browser.page);
     if (authentication.authenticated) this.workerAuthenticated = true;
     if (authentication.reason === "login-control-visible") {
       this.workerAuthenticated = false;
@@ -442,6 +460,50 @@ export class ChatGptChromeBridge {
       projectUrl: destination === CHATGPT_URL ? null : destination,
       ...authentication,
     };
+  }
+
+  async navigateBeforeSubmission(page, destination) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await page.goto(destination, {
+          waitUntil: "domcontentloaded",
+          timeout: 45_000,
+        });
+      } catch (error) {
+        // Native Chrome's initial home navigation can commit after CDP connects
+        // and interrupt our requested project navigation. Retrying is safe here:
+        // this helper is used only before any prompt has been submitted.
+        if (attempt === 2 || !/interrupted by another navigation/i.test(error.message || "")) throw error;
+        await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => {});
+        await page.waitForTimeout(250);
+      }
+    }
+  }
+
+  assertConversationDestination(page, conversationUrl) {
+    let matches = false;
+    try {
+      matches = conversationKeyFromUrl(page.url()) === conversationKeyFromUrl(conversationUrl);
+    } catch {
+      // Login, home and error redirects are not conversation destinations.
+    }
+    if (!matches) {
+      throw new Error("ChatGPT left the exact requested conversation during recovery; the bridge refused to send a reply.");
+    }
+  }
+
+  async waitForPageAuthentication(page, { conversationUrl = null } = {}) {
+    let authentication = await this.waitAuthenticationChecker(page);
+    for (let attempt = 0; attempt < 2 && !authentication.authenticated; attempt += 1) {
+      // A missing editor is not evidence of a signed-out account. Recover the
+      // incomplete page before reporting that login is required.
+      if (authentication.reason !== "composer-not-found") break;
+      if (conversationUrl) this.assertConversationDestination(page, conversationUrl);
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 45_000 });
+      if (conversationUrl) this.assertConversationDestination(page, conversationUrl);
+      authentication = await this.waitAuthenticationChecker(page);
+    }
+    return authentication;
   }
 
   async openForLogin({ profile } = {}) {
@@ -528,6 +590,9 @@ export class ChatGptChromeBridge {
       );
     }
     if (!opened.authenticated) {
+      if (opened.reason === "composer-not-found") {
+        throw new Error("ChatGPT's editor did not finish loading after recovery. No prompt was submitted; retry the operation.");
+      }
       throw new Error(
         "The selected automation profile is not signed in to ChatGPT. " +
           "Run open_chatgpt_for_login, complete sign-in, then sync options.",
@@ -600,83 +665,86 @@ export class ChatGptChromeBridge {
         ? await browser.context.newPage()
         : browser.page;
     const ownedPage = page !== browser.page;
-    const atDestination =
-      destination === CHATGPT_URL
-        ? isAllowedChatGptUrl(page.url())
-        : page.url().startsWith(destination);
-    if (newChat || !atDestination) {
-      await page.goto(destination, {
-        waitUntil: "domcontentloaded",
-        timeout: 45_000,
+    try {
+      const atDestination =
+        destination === CHATGPT_URL
+          ? isAllowedChatGptUrl(page.url())
+          : page.url().startsWith(destination);
+      if (newChat || !atDestination) {
+        await this.navigateBeforeSubmission(page, destination);
+      }
+      await page.waitForTimeout(500);
+      if (normalizedConversationUrl) this.assertConversationDestination(page, normalizedConversationUrl);
+      const authentication = await this.waitForPageAuthentication(page, {
+        conversationUrl: normalizedConversationUrl,
       });
-    }
-    await page.waitForTimeout(500);
-    const authentication = await this.waitAuthenticationChecker(page);
-    if (!authentication.authenticated) {
-      if (ownedPage) await page.close().catch(() => {});
-      throw new Error(
-        "The selected automation profile is not signed in to ChatGPT. " +
-          "Run open_chatgpt_for_login, complete sign-in, then sync options.",
-      );
-    }
-    this.workerAuthenticated = true;
-    let hydration = null;
-    let continuationState = null;
-    if (normalizedConversationUrl) {
-      const loadedConversationUrl = normalizeConversationUrl(page.url());
-      if (
-        conversationKeyFromUrl(loadedConversationUrl) !==
-        conversationKeyFromUrl(normalizedConversationUrl)
-      ) {
-        if (ownedPage) await page.close().catch(() => {});
+      if (!authentication.authenticated) {
+        if (authentication.reason === "composer-not-found") {
+          throw new Error("ChatGPT's editor did not finish loading after recovery. No prompt was submitted; retry the operation.");
+        }
         throw new Error(
-          "ChatGPT did not open the exact requested conversation, so the bridge refused to send a reply.",
+          "The selected automation profile is not signed in to ChatGPT. " +
+            "Run open_chatgpt_for_login, complete sign-in, then sync options.",
         );
       }
-      continuationState = await this.conversationReplyReadinessChecker(page);
-      // A just-created conversation can load without its editor/content even
-      // though the signed-in shell was ready. Reload only before submission,
-      // only for missing UI, and revalidate identity and login every time.
-      for (let attempt = 0; attempt < 2 && !continuationState.ready; attempt += 1) {
-        if (!["composer-not-found", "assistant-response-not-hydrated"].includes(continuationState.reason)) break;
-        await page.reload({ waitUntil: "domcontentloaded", timeout: 45_000 });
-        const reloadedUrl = normalizeConversationUrl(page.url());
-        if (conversationKeyFromUrl(reloadedUrl) !== conversationKeyFromUrl(normalizedConversationUrl)) {
-          if (ownedPage) await page.close().catch(() => {});
-          throw new Error("ChatGPT left the exact requested conversation during recovery; the bridge refused to send a reply.");
-        }
-        const reloadedAuthentication = await this.waitAuthenticationChecker(page);
-        if (!reloadedAuthentication.authenticated) {
-          if (ownedPage) await page.close().catch(() => {});
-          throw new Error("ChatGPT signed out while loading the conversation; the bridge did not submit a follow-up.");
+      this.workerAuthenticated = true;
+      let hydration = null;
+      let continuationState = null;
+      if (normalizedConversationUrl) {
+        const loadedConversationUrl = normalizeConversationUrl(page.url());
+        if (
+          conversationKeyFromUrl(loadedConversationUrl) !==
+          conversationKeyFromUrl(normalizedConversationUrl)
+        ) {
+          throw new Error(
+            "ChatGPT did not open the exact requested conversation, so the bridge refused to send a reply.",
+          );
         }
         continuationState = await this.conversationReplyReadinessChecker(page);
+        // A just-created conversation can load without its editor/content even
+        // though the signed-in shell was ready. Reload only before submission,
+        // only for missing UI, and revalidate identity and login every time.
+        for (let attempt = 0; attempt < 2 && !continuationState.ready; attempt += 1) {
+          if (!["composer-not-found", "assistant-response-not-hydrated"].includes(continuationState.reason)) break;
+          await page.reload({ waitUntil: "domcontentloaded", timeout: 45_000 });
+          const reloadedUrl = normalizeConversationUrl(page.url());
+          if (conversationKeyFromUrl(reloadedUrl) !== conversationKeyFromUrl(normalizedConversationUrl)) {
+            throw new Error("ChatGPT left the exact requested conversation during recovery; the bridge refused to send a reply.");
+          }
+          const reloadedAuthentication = await this.waitAuthenticationChecker(page);
+          if (!reloadedAuthentication.authenticated) {
+            throw new Error("ChatGPT signed out while loading the conversation; the bridge did not submit a follow-up.");
+          }
+          continuationState = await this.conversationReplyReadinessChecker(page);
+        }
+        hydration = {
+          hydrated: continuationState.assistantMessageCount > 0,
+          assistantMessageCount: continuationState.assistantMessageCount,
+          elapsedMs: continuationState.elapsedMs,
+        };
+        if (!continuationState.ready) {
+          throw new Error(
+            `The ChatGPT conversation is not ready for a reply (${continuationState.reason}). ` +
+              "Keep waiting or inspect the same conversation; the bridge did not submit a follow-up.",
+          );
+        }
       }
-      hydration = {
-        hydrated: continuationState.assistantMessageCount > 0,
-        assistantMessageCount: continuationState.assistantMessageCount,
-        elapsedMs: continuationState.elapsedMs,
+      return {
+        page,
+        ownedPage,
+        profile: browser.profile,
+        projectUrl:
+          normalizedConversationUrl || destination === CHATGPT_URL
+            ? null
+            : destination,
+        conversationUrl: normalizedConversationUrl,
+        hydration,
+        continuationState,
       };
-      if (!continuationState.ready) {
-        if (ownedPage) await page.close().catch(() => {});
-        throw new Error(
-          `The ChatGPT conversation is not ready for a reply (${continuationState.reason}). ` +
-            "Keep waiting or inspect the same conversation; the bridge did not submit a follow-up.",
-        );
-      }
+    } catch (error) {
+      if (ownedPage) await page.close().catch(() => {});
+      throw error;
     }
-    return {
-      page,
-      ownedPage,
-      profile: browser.profile,
-      projectUrl:
-        normalizedConversationUrl || destination === CHATGPT_URL
-          ? null
-          : destination,
-      conversationUrl: normalizedConversationUrl,
-      hydration,
-      continuationState,
-    };
   }
 
   async selectWithRepair(page, kind, preference, allowFallback) {
@@ -1494,6 +1562,13 @@ export class ChatGptChromeBridge {
   }
 
   async performCloseBrowser() {
+    if (this.failedBrowserLaunch) {
+      if (!this.failedBrowserLaunch.userDataDir) {
+        throw new Error("The failed Chrome launch has no verified cleanup metadata; its private worker profile was retained.");
+      }
+      await this.stopNativeChrome(this.failedBrowserLaunch);
+      this.failedBrowserLaunch = null;
+    }
     await this.stopVisibilityGuard();
     const browser = this.browserConnection;
     const browserProcess = this.browserProcess;

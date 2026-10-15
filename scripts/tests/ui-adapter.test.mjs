@@ -119,6 +119,74 @@ test("waits through a transient guest shell but never accepts a persistent login
   assert.ok(signedIn.reason.includes("composer-visible"));
 });
 
+test("rediscovers a picker moved outside its form during hydration and closes a stale menu", async (t) => {
+  const browser = await chromium.launch({ executablePath: chromeExecutable, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <style>@keyframes shifting { from { transform:translateX(0); } to { transform:translateX(60px); } }
+      #stale-trigger { animation:shifting 0.3s infinite alternate; }</style>
+    <main><form id="stale-form"><button id="stale-trigger" type="button" aria-haspopup="menu"
+      aria-label="Select ChatGPT model">Thinking effort Extra High</button></form>
+      <button id="replacement" type="button" aria-haspopup="menu" aria-label="Select ChatGPT model"
+        data-selected-reasoning-effort="max" style="display:none">Thinking effort Extra High</button>
+      <div contenteditable="true" role="textbox" aria-label="Ask ChatGPT"></div>
+    </main>
+    <div id="stale-menu" role="menu" hidden><button role="menuitemradio">Old High</button></div>
+    <div id="fresh-menu" role="menu" hidden><button role="menuitemradio">High</button><button role="menuitemradio">Pro</button></div>
+    <script>
+      document.body.dataset.staleClicks = '0';
+      document.body.dataset.freshClicks = '0';
+      document.body.dataset.staleClosed = '0';
+      document.querySelector('#stale-trigger').onclick = () => { document.body.dataset.staleClicks = '1'; };
+      document.querySelector('#replacement').onclick = () => {
+        document.body.dataset.freshClicks = String(Number(document.body.dataset.freshClicks) + 1);
+        if (document.querySelector('#stale-menu').hidden) document.querySelector('#fresh-menu').hidden = false;
+      };
+      document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        if (!document.querySelector('#stale-menu').hidden) document.body.dataset.staleClosed = '1';
+        document.querySelector('#stale-menu').hidden = true;
+        document.querySelector('#fresh-menu').hidden = true;
+      });
+      setTimeout(() => {
+        document.querySelector('#stale-form').remove();
+        document.querySelector('#stale-menu').hidden = false;
+        document.querySelector('#replacement').style.display = '';
+      }, 1200);
+    </script>
+  `);
+  const options = await discoverAvailableOptions(page, {}, { includeModels: false });
+  assert.deepEqual(options.reasoningOptions, ["High", "Pro"]);
+  assert.equal(await page.locator("body").getAttribute("data-stale-clicks"), "0");
+  assert.equal(await page.locator("body").getAttribute("data-fresh-clicks"), "1");
+  assert.equal(await page.locator("body").getAttribute("data-stale-closed"), "1");
+});
+
+test("picker recovery is bounded and preserves unrelated errors", async () => {
+  for (const [message, expectedClicks] of [
+    ["locator.click: Timeout 5000ms exceeded while element detached", 3],
+    ["Target page, context or browser has been closed", 1],
+  ]) {
+    const failure = new Error(message);
+    let clicks = 0;
+    const locator = {
+      count: async () => 1,
+      nth() { return this; },
+      isVisible: async () => true,
+      evaluate: async () => ({ role: "button", ariaLabel: "Select ChatGPT model" }),
+      click: async () => { clicks += 1; throw failure; },
+    };
+    const page = {
+      locator: () => locator,
+      evaluate: async () => 0,
+      waitForTimeout: async () => {},
+    };
+    await assert.rejects(discoverAvailableOptions(page, {}, { includeModels: false }), error => error === failure);
+    assert.equal(clicks, expectedClicks);
+  }
+});
+
 const fixtureHtml = `<!doctype html>
 <html>
   <body>
@@ -1048,6 +1116,40 @@ test("does not mistake ChatGPT's logged-out guest composer for authentication", 
     authenticated: false,
     reason: "login-control-visible",
   });
+});
+
+test("recognizes the current provider login page instead of retrying missing-editor hydration", async (t) => {
+  const browser = await chromium.launch({ executablePath: chromeExecutable, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route("https://chatgpt.com/**", route => route.fulfill({
+    contentType: "text/html",
+    body: `<main><h1>Log in or sign up</h1>
+      <button>Continue with Google</button><button>Continue with Apple</button>
+      <button>Continue with phone</button><label>Email address<input type="email"></label></main>`,
+  }));
+  await page.goto("https://chatgpt.com/auth/login?next=%2Fg%2Fg-p-project%2Fproject");
+  assert.deepEqual(await authenticationStatus(page), {
+    authenticated: false, reason: "login-control-visible",
+  });
+  assert.deepEqual(await waitForAuthenticationStatus(page, { timeoutMs: 300 }), {
+    authenticated: false, reason: "login-control-visible",
+  });
+});
+
+test("login detection requires visible auth UI on an auth destination", async (t) => {
+  const browser = await chromium.launch({ executablePath: chromeExecutable, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route("https://chatgpt.com/**", route => route.fulfill({
+    contentType: "text/html", body: "<main></main>",
+  }));
+  await page.goto("https://chatgpt.com/auth/login");
+  assert.equal((await authenticationStatus(page)).reason, "composer-not-found");
+  await page.goto("https://chatgpt.com/c/signed-in-conversation");
+  await page.setContent(`<main><h1>Log in or sign up</h1><button>Continue with Google</button>
+    <div id="prompt-textarea" role="textbox" contenteditable="true"></div></main>`);
+  assert.equal((await authenticationStatus(page)).authenticated, true);
 });
 
 test("waits for a slowly hydrated signed-in composer", async (t) => {

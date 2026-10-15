@@ -76,3 +76,18 @@ test("resolves the controlled Chrome PID from its unique worker arguments", () =
     null,
   );
 });
+
+
+test("worker process matching excludes launchers, helpers and argument prefix collisions", () => {
+  const executable = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  const identity = { port: 19333, userDataDir: "/private/bridge/User Data", executable };
+  for (const command of [
+    `${executable} --remote-debugging-port=193330 --user-data-dir=${identity.userDataDir}`,
+    `${executable} --remote-debugging-port=19333 --user-data-dir=${identity.userDataDir}-other`,
+    `${executable} --remote-debugging-port=19333 --user-data-dir=${identity.userDataDir} backup --profile-directory=Default`,
+    `/usr/bin/open -W -a /Applications/Google Chrome.app --args --remote-debugging-port=19333 --user-data-dir=${identity.userDataDir}`,
+    `${executable} --type=renderer --remote-debugging-port=19333 --user-data-dir=${identity.userDataDir}`,
+    `/tmp/unrelated --remote-debugging-port=19333 --user-data-dir=${identity.userDataDir}`,
+  ]) assert.equal(parseChromeProcessId(`42 ${command}`, identity), null, command);
+  assert.equal(parseChromeProcessId(`42 ${executable} --user-data-dir=${identity.userDataDir} --profile-directory=Profile 1 --remote-debugging-port=19333 https://chatgpt.com/`, identity), 42);
+});
