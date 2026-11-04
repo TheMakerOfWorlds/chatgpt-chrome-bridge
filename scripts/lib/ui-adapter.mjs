@@ -1255,10 +1255,14 @@ async function activeResponseState(page) {
         'main button, main [role="status"], main [aria-live], main [data-status], main [data-state], main [data-testid]',
       ),
     ).filter(visible);
+    const reasoningPicker =
+      '[data-composer-navigation-target="reasoning"], [data-selected-reasoning-effort]';
     for (const element of candidates) {
       // Picker text such as "Thinking effort Extra High" describes a setting.
       // It is not evidence that an assistant is generating a response.
-      if (element.closest('[aria-haspopup], [role="menu"], [data-composer-navigation-target="reasoning"], [data-selected-reasoning-effort]')) continue;
+      if (element.closest(`[aria-haspopup], [role="menu"], ${reasoningPicker}`)) continue;
+      // Tooltip wrappers around the picker carry its text too.
+      if (element.querySelector(reasoningPicker)) continue;
       const testId = element.getAttribute("data-testid") || "";
       const label = [
         element.getAttribute("aria-label"),

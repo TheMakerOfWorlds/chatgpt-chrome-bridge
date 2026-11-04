@@ -29,6 +29,8 @@ const chromeExecutable =
 // Reduced from the signed-in website's October 2026 markup. The search-unit
 // wrapper contains content; response actions sit outside it, alongside the user
 // turn. The model picker and saved-response loading button are unrelated UI.
+// Since November 2026 the picker sits inside a tooltip wrapper whose own
+// data-state is a candidate for activity scanning.
 const currentConversationFixture = `
   <main>
     <div id="messages">
@@ -44,7 +46,7 @@ const currentConversationFixture = `
       </div>
     </div>
     <form><div id="prompt-textarea" role="textbox" contenteditable="true"></div>
-      <button aria-label="Select ChatGPT model" aria-haspopup="menu" data-composer-navigation-target="reasoning" data-selected-reasoning-effort="max">Thinking effort<span>Extra High</span></button>
+      <div data-composer-trailing-controls="true"><span data-state="closed"><button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu" data-state="closed" data-composer-navigation-target="reasoning" data-selected-reasoning-effort="max">Thinking effort<span>Extra High</span></button></span></div>
     </form>
   </main>`;
 
@@ -58,6 +60,7 @@ test("reads current ChatGPT content and ignores thinking settings and saved-resp
   assert.equal(messages[0].text, "Completed answer.\n\ncurrent.csv");
   assert.equal(messages[0].terminal, true);
   assert.equal(messages[0].signal, "aria-label:Copy");
+  assert.deepEqual((await inspectConversationState(page)).active, {active: false, signal: null});
   const response = await waitForAssistantResponse(page, {beforeCount: 0, beforeLast: ""}, {timeoutMs: 5_000});
   assert.equal(response.text, messages[0].text);
   const reply = await waitForConversationReplyReadiness(page, {timeoutMs: 3_000});
