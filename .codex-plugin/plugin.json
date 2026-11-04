@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-chrome-bridge",
-  "version": "0.2.11+codex.20261104162157",
+  "version": "0.2.12+codex.20261104164643",
   "description": "Give Codex context-isolated ChatGPT reasoning and exact-thread follow-ups through a signed-in Chrome profile.",
   "author": {
     "name": "Jackson Stone"
